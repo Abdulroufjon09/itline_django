@@ -34,6 +34,7 @@ INSTALLED_APPS = [
 
 # MIDDLEWARE
 MIDDLEWARE = [
+    "config.middleware.JsonExceptionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     # WhiteNoise static uchun
