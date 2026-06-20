@@ -4,8 +4,12 @@ from datetime import datetime, date
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
+from django.db import models as db_models
 
-from .models import Student, Teacher, Lesson, Attendance, Payment, StagePrice, StudentPenalty
+from .models import (
+    Student, Teacher, Lesson, Attendance, Payment,
+    StagePrice, StudentPenalty, Manager, CoinTransaction,
+)
 
 ADMIN_PASSWORD = "excel2024"
 EXCELLENCE_PASSWORD = "excellence2024"
@@ -25,6 +29,341 @@ def get_schedule_for_day(weekday):
     elif weekday in EVEN_DAYS:
         return "even"
     return None
+
+
+# ─────────────────────────────────────────
+# MANAGER (eng yuqori daraja)
+# ─────────────────────────────────────────
+
+@csrf_exempt
+def manager_register(request):
+    """
+    Yangi menejer yaratish.
+    Faqat mavjud menejer yoki boshlang'ich sozlash uchun.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        phone = data.get("phone", "").strip()
+
+        if Manager.objects.filter(phone=phone).exists():
+            return JsonResponse({"error": "Bu telefon raqam allaqachon ro'yxatdan o'tgan"}, status=400)
+
+        manager = Manager.objects.create(
+            name=data.get("name", "").strip(),
+            surname=data.get("surname", "").strip(),
+            phone=phone,
+            password=make_password(data.get("password", "")),
+        )
+        return JsonResponse({
+            "id": manager.id,
+            "name": manager.name,
+            "surname": manager.surname,
+            "phone": manager.phone,
+            "role": "manager",
+        }, status=201)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def manager_login(request):
+    """Menejer login."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        phone = data.get("phone", "")
+        password = data.get("password", "")
+
+        manager = Manager.objects.filter(phone=phone, is_active=True).first()
+        if not manager:
+            return JsonResponse({"error": "Menejer topilmadi"}, status=404)
+
+        if not check_password(password, manager.password):
+            return JsonResponse({"error": "Parol noto'g'ri"}, status=401)
+
+        return JsonResponse({
+            "id": manager.id,
+            "name": manager.name,
+            "surname": manager.surname,
+            "phone": manager.phone,
+            "role": "manager",
+            "is_active": manager.is_active,
+        })
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+def get_managers(request):
+    """Barcha menejerlar ro'yxati."""
+    managers = list(
+        Manager.objects.filter(is_active=True).values(
+            "id", "name", "surname", "phone", "is_active", "created_at"
+        )
+    )
+    return JsonResponse(managers, safe=False)
+
+
+@csrf_exempt
+def update_manager(request, manager_id):
+    """Menejer ma'lumotlarini yangilash."""
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        manager = Manager.objects.filter(id=manager_id).first()
+        if not manager:
+            return JsonResponse({"error": "Menejer topilmadi"}, status=404)
+
+        if "name" in data:
+            manager.name = data["name"]
+        if "surname" in data:
+            manager.surname = data["surname"]
+        if "phone" in data:
+            manager.phone = data["phone"]
+        if "password" in data and data["password"]:
+            manager.password = make_password(data["password"])
+        if "is_active" in data:
+            manager.is_active = data["is_active"]
+        manager.save()
+        return JsonResponse({"message": "Menejer ma'lumotlari yangilandi!"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_manager(request, manager_id):
+    """Menejerni o'chirish (deaktivatsiya)."""
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    manager = Manager.objects.filter(id=manager_id).first()
+    if not manager:
+        return JsonResponse({"error": "Menejer topilmadi"}, status=404)
+    manager.is_active = False
+    manager.save()
+    return JsonResponse({"message": "Menejer deaktivatsiya qilindi!"})
+
+
+# ─────────────────────────────────────────
+# COIN
+# ─────────────────────────────────────────
+
+def get_coin_balance(request, student_id):
+    """Student coin balansini ko'rish."""
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return JsonResponse({"error": "Student topilmadi"}, status=404)
+    return JsonResponse({
+        "student_id": student.id,
+        "student_name": f"{student.name} {student.surname}",
+        "coin_balance": student.coin_balance,
+    })
+
+
+def get_coin_transactions(request, student_id):
+    """Student coin tarixini ko'rish."""
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+    txns = CoinTransaction.objects.filter(student_id=student_id).select_related(
+        "given_by_teacher", "given_by_manager"
+    )
+    data = [
+        {
+            "id": t.id,
+            "amount": t.amount,
+            "reason": t.reason,
+            "reason_display": t.get_reason_display(),
+            "description": t.description,
+            "given_by": (
+                t.given_by_manager.name if t.given_by_manager
+                else (t.given_by_teacher.name if t.given_by_teacher else "Tizim")
+            ),
+            "given_by_role": (
+                "manager" if t.given_by_manager
+                else ("teacher" if t.given_by_teacher else "system")
+            ),
+            "created_at": t.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+        for t in txns
+    ]
+    return JsonResponse({
+        "student_id": student.id,
+        "student_name": f"{student.name} {student.surname}",
+        "coin_balance": student.coin_balance,
+        "transactions": data,
+    })
+
+
+def get_all_coin_balances(request):
+    """
+    Barcha studentlarning coin balansini ko'rish.
+    ?teacher_id=X filter qo'llab-quvvatlanadi.
+    """
+    teacher_id = request.GET.get("teacher_id", "")
+    qs = Student.objects.select_related("teacher").filter(
+        is_admin=False, is_excellence=False
+    ).order_by("-coin_balance")
+
+    if teacher_id:
+        try:
+            qs = qs.filter(teacher_id=int(teacher_id))
+        except ValueError:
+            pass
+
+    data = [
+        {
+            "student_id": s.id,
+            "name": s.name,
+            "surname": s.surname,
+            "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
+            "coin_balance": s.coin_balance,
+        }
+        for s in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+@csrf_exempt
+def add_coin(request):
+    """
+    Studentga coin berish yoki olish.
+    Teacher yoki Manager tomonidan chaqiriladi.
+
+    Body:
+    {
+        "student_id": 5,
+        "amount": 10,          # manfiy bo'lishi ham mumkin (jarima)
+        "reason": "reward",
+        "description": "...",
+        "teacher_id": 2,       # teacher chaqirsa
+        "manager_id": 1        # manager chaqirsa
+    }
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+
+        student = Student.objects.filter(id=data.get("student_id")).first()
+        if not student:
+            return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+        amount = data.get("amount")
+        if amount is None:
+            return JsonResponse({"error": "amount kiritilmadi"}, status=400)
+
+        amount = int(amount)
+
+        # Balans manfiy bo'lmasligi tekshiruvi (ixtiyoriy)
+        if student.coin_balance + amount < 0:
+            return JsonResponse({
+                "error": f"Yetarli coin yo'q. Joriy balans: {student.coin_balance}"
+            }, status=400)
+
+        given_by_teacher = None
+        given_by_manager = None
+
+        if data.get("manager_id"):
+            given_by_manager = Manager.objects.filter(
+                id=data["manager_id"], is_active=True
+            ).first()
+
+        elif data.get("teacher_id"):
+            given_by_teacher = Teacher.objects.filter(id=data["teacher_id"]).first()
+
+        txn = CoinTransaction.objects.create(
+            student=student,
+            amount=amount,
+            reason=data.get("reason", "manual"),
+            description=data.get("description", ""),
+            given_by_teacher=given_by_teacher,
+            given_by_manager=given_by_manager,
+        )
+
+        # Balansni qayta o'qiymiz (save() ichida yangilangan)
+        student.refresh_from_db()
+
+        return JsonResponse({
+            "message": "Coin qo'shildi!" if amount >= 0 else "Coin ayirildi!",
+            "transaction_id": txn.id,
+            "amount": amount,
+            "new_balance": student.coin_balance,
+        }, status=201)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_coin_transaction(request, txn_id):
+    """
+    Coin tranzaksiyasini bekor qilish (faqat Manager).
+    Balans qayta hisoblanadi.
+    """
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    txn = CoinTransaction.objects.filter(id=txn_id).first()
+    if not txn:
+        return JsonResponse({"error": "Tranzaksiya topilmadi"}, status=404)
+
+    # Balansni teskari qaytaramiz
+    Student.objects.filter(pk=txn.student_id).update(
+        coin_balance=db_models.F("coin_balance") - txn.amount
+    )
+    txn.delete()
+    return JsonResponse({"message": "Tranzaksiya bekor qilindi va balans qayta hisoblandi!"})
+
+
+@csrf_exempt
+def set_coin_balance(request, student_id):
+    """
+    Faqat Manager: student coin balansini to'g'ridan-to'g'ri belgilash.
+    Farqni CoinTransaction sifatida saqlaydi.
+    """
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        new_balance = data.get("coin_balance")
+        manager_id = data.get("manager_id")
+
+        if new_balance is None:
+            return JsonResponse({"error": "coin_balance kiritilmadi"}, status=400)
+
+        student = Student.objects.filter(id=student_id).first()
+        if not student:
+            return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+        given_by_manager = None
+        if manager_id:
+            given_by_manager = Manager.objects.filter(
+                id=manager_id, is_active=True
+            ).first()
+
+        diff = int(new_balance) - student.coin_balance
+        if diff == 0:
+            return JsonResponse({"message": "Balans o'zgarmadi", "coin_balance": student.coin_balance})
+
+        CoinTransaction.objects.create(
+            student=student,
+            amount=diff,
+            reason="manual",
+            description=f"Balans to'g'ridan-to'g'ri {new_balance} ga o'rnatildi",
+            given_by_manager=given_by_manager,
+        )
+
+        student.refresh_from_db()
+        return JsonResponse({
+            "message": "Balans yangilandi!",
+            "coin_balance": student.coin_balance,
+        })
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
 
 
 # ─────────────────────────────────────────
@@ -167,6 +506,7 @@ def get_students(request):
             "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
             "stage": s.stage,
             "schedule": s.schedule,
+            "coin_balance": s.coin_balance,
         }
         for s in qs
     ]
@@ -258,6 +598,7 @@ def register_student(request):
             "schedule": student.schedule,
             "is_admin": student.is_admin,
             "is_excellence": student.is_excellence,
+            "coin_balance": student.coin_balance,
         }, status=201)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -295,6 +636,7 @@ def login_student(request):
             "is_excellence": student.is_excellence,
             "stage": student.stage,
             "schedule": student.schedule,
+            "coin_balance": student.coin_balance,
         })
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
