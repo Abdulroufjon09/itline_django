@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, date
+from datetime import datetime
 
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -32,10 +32,15 @@ def get_schedule_for_day(weekday):
 # ─────────────────────────────────────────
 
 def get_teachers(request):
-    teachers = list(
-        Teacher.objects.all().values("id", "name", "phone", "is_senior", "penalty_limit")
-    )
-    return JsonResponse(teachers, safe=False)
+    try:
+        teachers = list(
+            Teacher.objects.all().values("id", "name", "phone", "is_senior", "penalty_limit")
+        )
+        return JsonResponse(teachers, safe=False)
+    except Exception as e:
+        # Return JSON error (prevents frontend JSON.parse errors when server
+        # returns HTML error pages). Keep field names unchanged for Vue.
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 @csrf_exempt
@@ -311,12 +316,12 @@ def get_lessons(request):
         qs = qs.filter(teacher_id=teacher_id)
     data = [
         {
-            "id": l.id,
-            "title": l.title,
-            "date": str(l.date),
-            "teacher_name": l.teacher.name if l.teacher else "",
+            "id": lesson.id,
+            "title": lesson.title,
+            "date": str(lesson.date),
+            "teacher_name": lesson.teacher.name if lesson.teacher else "",
         }
-        for l in qs
+        for lesson in qs
     ]
     return JsonResponse(data, safe=False)
 
