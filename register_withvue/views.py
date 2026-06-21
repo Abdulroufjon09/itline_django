@@ -1,17 +1,38 @@
 import json
 from datetime import datetime
 
+from django.db import transaction
+from django.db.models import Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
 
-from .models import Student, Teacher, Lesson, Attendance, Payment, StagePrice, StudentPenalty
+from .models import (
+    Student, Teacher, Lesson, Attendance, Payment, StagePrice, StudentPenalty,
+    CoinTransaction, Product, Order,
+)
 
 ADMIN_PASSWORD = "excel2024"
 EXCELLENCE_PASSWORD = "excellence2024"
 
 ODD_DAYS = {0, 2, 4}
 EVEN_DAYS = {1, 3, 5}
+
+# Attendance status o'zgarganda avtomatik beriladigan coinlar
+ATTENDANCE_COINS = {
+    "present": 10,
+    "late": 5,
+    "absent": -10,
+}
+ATTENDANCE_REASON = {
+    "present": "present",
+    "late": "late",
+    "absent": "absent",
+}
+
+EXAM_PASS_COINS = 80
+HOMEWORK_DONE_COINS = 20
+HOMEWORK_MISSED_COINS = -20
 
 
 def get_stage_price(stage):
@@ -25,6 +46,24 @@ def get_schedule_for_day(weekday):
     elif weekday in EVEN_DAYS:
         return "even"
     return None
+
+
+def apply_coin_transaction(student, amount, reason, given_by=None, note="", attendance=None):
+    """
+    Coin tranzaksiyasini yozadi va Student.coins ni shu summaga yangilaydi.
+    amount musbat yoki manfiy bo'lishi mumkin.
+    """
+    CoinTransaction.objects.create(
+        student=student,
+        given_by=given_by,
+        reason=reason,
+        amount=amount,
+        note=note,
+        attendance=attendance,
+    )
+    student.coins = (student.coins or 0) + amount
+    student.save(update_fields=["coins"])
+    return student.coins
 
 
 # ─────────────────────────────────────────
@@ -172,6 +211,7 @@ def get_students(request):
             "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
             "stage": s.stage,
             "schedule": s.schedule,
+            "coins": s.coins,
         }
         for s in qs
     ]
@@ -300,6 +340,7 @@ def login_student(request):
             "is_excellence": student.is_excellence,
             "stage": student.stage,
             "schedule": student.schedule,
+            "coins": student.coins,
         })
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -388,16 +429,54 @@ def get_attendance(request, lesson_id):
 
 @csrf_exempt
 def update_attendance(request, attendance_id):
+    """
+    Status yangilanganda avtomatik coin beriladi/ayiriladi:
+    present +10, late +5, absent -10.
+    Agar status avval ham xuddi shu bo'lsa, qayta coin berilmaydi (idempotent).
+    Status o'zgarsa, eski statusning coini bekor qilinib, yangisi qo'llanadi.
+    """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
         data = json.loads(request.body)
-        attendance = Attendance.objects.filter(id=attendance_id).first()
+        attendance = Attendance.objects.select_related("student").filter(id=attendance_id).first()
         if not attendance:
             return JsonResponse({"error": "Attendance topilmadi"}, status=404)
-        attendance.status = data.get("status")
-        attendance.save()
-        return JsonResponse({"message": "Yangilandi!"})
+
+        new_status = data.get("status")
+        old_status = attendance.status
+
+        if new_status not in dict(Attendance.STATUS_CHOICES):
+            return JsonResponse({"error": "Noto'g'ri status"}, status=400)
+
+        with transaction.atomic():
+            if new_status != old_status:
+                student = attendance.student
+
+                # Eski statusga berilgan coinni bekor qilamiz (agar bor bo'lsa)
+                if old_status in ATTENDANCE_COINS:
+                    apply_coin_transaction(
+                        student,
+                        -ATTENDANCE_COINS[old_status],
+                        ATTENDANCE_REASON.get(old_status, "manual"),
+                        note=f"Status '{old_status}' bekor qilindi",
+                        attendance=attendance,
+                    )
+
+                # Yangi statusga coin beramiz
+                if new_status in ATTENDANCE_COINS:
+                    apply_coin_transaction(
+                        student,
+                        ATTENDANCE_COINS[new_status],
+                        ATTENDANCE_REASON.get(new_status, "manual"),
+                        note=f"Status: {new_status}",
+                        attendance=attendance,
+                    )
+
+            attendance.status = new_status
+            attendance.save()
+
+        return JsonResponse({"message": "Yangilandi!", "coins": attendance.student.coins})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -641,5 +720,348 @@ def update_payment_amount(request, payment_id):
             "message": "Summa yangilandi!",
             "amount_due": payment.amount_due,
         })
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+# ─────────────────────────────────────────
+# COINS
+# ─────────────────────────────────────────
+
+def get_student_coins(request, student_id):
+    """Student faqat o'z coinini ko'rishi uchun (frontend 'faqat coins ko'rinishi' talabi)."""
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return JsonResponse({"error": "Student topilmadi"}, status=404)
+    return JsonResponse({"student_id": student.id, "coins": student.coins})
+
+
+def get_coin_transactions(request, student_id):
+    """Student/teacher uchun coin tarixi (ixtiyoriy, lekin foydali bo'ladi)."""
+    qs = CoinTransaction.objects.filter(student_id=student_id).select_related(
+        "given_by"
+    ).order_by("-created_at")
+    data = [
+        {
+            "id": t.id,
+            "reason": t.reason,
+            "reason_display": t.get_reason_display(),
+            "amount": t.amount,
+            "note": t.note,
+            "given_by": t.given_by.name if t.given_by else "Tizim",
+            "created_at": t.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+        for t in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+@csrf_exempt
+def give_manual_coins(request):
+    """
+    Teacher o'z studentiga hohlagan miqdorda coin beradi.
+    Sabab: imtihon (+80 default), vazifa (+/-20 default) yoki erkin 'manual' miqdor.
+    Body: { student_id, teacher_id, reason, amount (optional), note (optional) }
+    Agar reason='exam_pass' yoki 'homework_done'/'homework_missed' bo'lsa va amount
+    berilmasa, default qiymatlar ishlatiladi. Aks holda amount majburiy.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        student = Student.objects.filter(id=data.get("student_id")).first()
+        if not student:
+            return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+        teacher = None
+        if data.get("teacher_id"):
+            teacher = Teacher.objects.filter(id=data["teacher_id"]).first()
+
+        reason = data.get("reason", "manual")
+        amount = data.get("amount")
+
+        defaults = {
+            "exam_pass": EXAM_PASS_COINS,
+            "homework_done": HOMEWORK_DONE_COINS,
+            "homework_missed": HOMEWORK_MISSED_COINS,
+        }
+        if amount is None:
+            amount = defaults.get(reason)
+        if amount is None:
+            return JsonResponse({"error": "amount kiritilmadi"}, status=400)
+
+        new_balance = apply_coin_transaction(
+            student,
+            amount,
+            reason,
+            given_by=teacher,
+            note=data.get("note", ""),
+        )
+
+        return JsonResponse({
+            "message": "Coin berildi!",
+            "student_id": student.id,
+            "coins": new_balance,
+        }, status=201)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+def get_leaderboard(request):
+    """
+    Eng ko'p coin to'plagan studentlar reytingi.
+    Ixtiyoriy: ?teacher_id= bilan faqat shu teacher studentlari orasida reyting.
+    """
+    teacher_id = request.GET.get("teacher_id", "")
+    qs = Student.objects.select_related("teacher").filter(
+        is_admin=False, is_excellence=False
+    )
+    if teacher_id:
+        qs = qs.filter(teacher_id=teacher_id)
+
+    qs = qs.order_by("-coins", "name")[:100]
+
+    data = [
+        {
+            "rank": i + 1,
+            "id": s.id,
+            "name": s.name,
+            "surname": s.surname,
+            "teacher_name": s.teacher.name if s.teacher else "",
+            "coins": s.coins,
+        }
+        for i, s in enumerate(qs)
+    ]
+    return JsonResponse(data, safe=False)
+
+
+# ─────────────────────────────────────────
+# MAGAZINE (DO'KON)
+# ─────────────────────────────────────────
+
+def get_products(request):
+    """Student/umumiy ko'rinish uchun: faqat aktiv mahsulotlar."""
+    qs = Product.objects.filter(is_active=True).order_by("price_coins")
+    data = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "image": p.image,
+            "price_coins": p.price_coins,
+            "description": p.description,
+            "stock": p.stock,
+        }
+        for p in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+def get_all_products(request):
+    """Admin uchun: faol va nofaol barcha mahsulotlar."""
+    qs = Product.objects.all().order_by("-created_at")
+    data = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "image": p.image,
+            "price_coins": p.price_coins,
+            "description": p.description,
+            "is_active": p.is_active,
+            "stock": p.stock,
+        }
+        for p in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+@csrf_exempt
+def create_product(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        product = Product.objects.create(
+            name=data.get("name"),
+            image=data.get("image", ""),
+            price_coins=data.get("price_coins", 0),
+            description=data.get("description", ""),
+            is_active=data.get("is_active", True),
+            stock=data.get("stock"),
+        )
+        return JsonResponse({"id": product.id, "message": "Mahsulot qo'shildi!"}, status=201)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def update_product(request, product_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        product = Product.objects.filter(id=product_id).first()
+        if not product:
+            return JsonResponse({"error": "Mahsulot topilmadi"}, status=404)
+
+        if "name" in data:
+            product.name = data["name"]
+        if "image" in data:
+            product.image = data["image"]
+        if "price_coins" in data:
+            product.price_coins = data["price_coins"]
+        if "description" in data:
+            product.description = data["description"]
+        if "is_active" in data:
+            product.is_active = data["is_active"]
+        if "stock" in data:
+            product.stock = data["stock"]
+        product.save()
+        return JsonResponse({"message": "Mahsulot yangilandi!"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_product(request, product_id):
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    Product.objects.filter(id=product_id).delete()
+    return JsonResponse({"message": "O'chirildi!"})
+
+
+# ─────────────────────────────────────────
+# ORDERS (Magazindan xarid)
+# ─────────────────────────────────────────
+
+@csrf_exempt
+def create_order(request):
+    """
+    Student coin sarflab mahsulot buyurtma qiladi.
+    Coin darhol ayiriladi (rezerv qilinadi), status='pending' bo'lib qoladi.
+    Admin/teacher keyin approve yoki reject qiladi (reject bo'lsa coin qaytariladi).
+    Body: { student_id, product_id }
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        student = Student.objects.filter(id=data.get("student_id")).first()
+        if not student:
+            return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+        product = Product.objects.filter(id=data.get("product_id"), is_active=True).first()
+        if not product:
+            return JsonResponse({"error": "Mahsulot topilmadi yoki faol emas"}, status=404)
+
+        if product.stock is not None and product.stock <= 0:
+            return JsonResponse({"error": "Mahsulot tugagan"}, status=400)
+
+        if student.coins < product.price_coins:
+            return JsonResponse({"error": "Coin yetarli emas"}, status=400)
+
+        with transaction.atomic():
+            order = Order.objects.create(
+                student=student,
+                product=product,
+                product_name=product.name,
+                price_coins=product.price_coins,
+                status="pending",
+            )
+
+            apply_coin_transaction(
+                student,
+                -product.price_coins,
+                "purchase",
+                note=f"Buyurtma #{order.id}: {product.name}",
+            )
+
+            if product.stock is not None:
+                product.stock -= 1
+                product.save(update_fields=["stock"])
+
+        return JsonResponse({
+            "id": order.id,
+            "message": "Buyurtma yaratildi!",
+            "coins": student.coins,
+        }, status=201)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+def get_student_orders(request, student_id):
+    qs = Order.objects.filter(student_id=student_id).order_by("-created_at")
+    data = [
+        {
+            "id": o.id,
+            "product_name": o.product_name,
+            "price_coins": o.price_coins,
+            "status": o.status,
+            "created_at": o.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+        for o in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+def get_all_orders(request):
+    """Admin uchun: barcha buyurtmalar (kerak bo'lsa status bo'yicha filter)."""
+    status = request.GET.get("status", "")
+    qs = Order.objects.select_related("student").order_by("-created_at")
+    if status:
+        qs = qs.filter(status=status)
+    data = [
+        {
+            "id": o.id,
+            "student_id": o.student.id,
+            "student_name": f"{o.student.name} {o.student.surname}",
+            "product_name": o.product_name,
+            "price_coins": o.price_coins,
+            "status": o.status,
+            "created_at": o.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+        for o in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+@csrf_exempt
+def resolve_order(request, order_id):
+    """
+    Admin buyurtmani tasdiqlaydi (approved) yoki rad etadi (rejected).
+    Rad etilsa, sarflangan coin studentga qaytariladi.
+    Body: { status: 'approved' | 'rejected' }
+    """
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        new_status = data.get("status")
+        if new_status not in ("approved", "rejected"):
+            return JsonResponse({"error": "Noto'g'ri status"}, status=400)
+
+        order = Order.objects.select_related("student").filter(id=order_id).first()
+        if not order:
+            return JsonResponse({"error": "Buyurtma topilmadi"}, status=404)
+
+        if order.status != "pending":
+            return JsonResponse({"error": "Bu buyurtma allaqachon hal qilingan"}, status=400)
+
+        with transaction.atomic():
+            if new_status == "rejected":
+                apply_coin_transaction(
+                    order.student,
+                    order.price_coins,
+                    "purchase_cancel",
+                    note=f"Buyurtma #{order.id} bekor qilindi, coin qaytarildi",
+                )
+                if order.product and order.product.stock is not None:
+                    order.product.stock += 1
+                    order.product.save(update_fields=["stock"])
+
+            order.status = new_status
+            order.resolved_at = datetime.now()
+            order.save()
+
+        return JsonResponse({"message": "Yangilandi!", "status": order.status})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)

@@ -39,6 +39,7 @@ class Student(models.Model):
     )
     is_admin = models.BooleanField(default=False)
     is_excellence = models.BooleanField(default=False)
+    coins = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -131,3 +132,86 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.student} — {self.month} — {self.amount_due}"
+
+
+# ─────────────────────────────────────────
+# COINS
+# ─────────────────────────────────────────
+
+class CoinTransaction(models.Model):
+    """
+    Har bir coin o'zgarishi shu yerda log qilinadi (audit / tarix uchun).
+    Student.coins maydoni har doim shu tranzaksiyalar yig'indisiga teng bo'lib turadi.
+    """
+
+    REASON_CHOICES = [
+        ("exam_pass", "Imtihondan o'tdi"),
+        ("homework_done", "Vazifa qilingan"),
+        ("homework_missed", "Vazifa qilinmagan"),
+        ("present", "Darsga keldi"),
+        ("late", "Kech keldi"),
+        ("absent", "Darsga kelmadi"),
+        ("manual", "Teacher tomonidan qo'lda"),
+        ("purchase", "Magazindan xarid"),
+        ("purchase_cancel", "Xarid bekor qilindi (qaytarildi)"),
+    ]
+
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE, related_name="coin_transactions"
+    )
+    given_by = models.ForeignKey(
+        Teacher, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="coin_transactions_given",
+    )
+    reason = models.CharField(max_length=20, choices=REASON_CHOICES, default="manual")
+    amount = models.IntegerField(default=0)  # musbat yoki manfiy bo'lishi mumkin
+    note = models.CharField(max_length=255, blank=True)
+    # Agar shu tranzaksiya ma'lum bir attendance yozuviga bog'liq bo'lsa
+    attendance = models.ForeignKey(
+        Attendance, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="coin_transactions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.student} — {self.get_reason_display()} — {self.amount}"
+
+
+# ─────────────────────────────────────────
+# MAGAZINE (DO'KON)
+# ─────────────────────────────────────────
+
+class Product(models.Model):
+    name = models.CharField(max_length=200)
+    image = models.URLField(max_length=500, blank=True)
+    price_coins = models.IntegerField(default=0)  # nechta coin turadi
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)  # do'konda ko'rinadimi
+    stock = models.IntegerField(null=True, blank=True)  # None = cheksiz
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} — {self.price_coins} coin"
+
+
+class Order(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Kutilmoqda"),
+        ("approved", "Berildi"),
+        ("rejected", "Bekor qilindi"),
+    ]
+
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE, related_name="orders"
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.SET_NULL, null=True, related_name="orders"
+    )
+    product_name = models.CharField(max_length=200)  # mahsulot o'chirilsa ham nomi qolishi uchun
+    price_coins = models.IntegerField(default=0)  # xarid vaqtidagi narx
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.student} — {self.product_name} — {self.status}"

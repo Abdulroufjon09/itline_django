@@ -31,8 +31,28 @@ urlpatterns = [
     path("payments/confirm/<int:payment_id>/", views.confirm_payment),
     path("payments/update/<int:payment_id>/", views.update_payment_amount),
     path("penalties/student/<int:student_id>/", views.get_student_penalties),
-    path("penalties/by-teacher/<int:teacher_id>/", views.get_teacher_students_penalties),
+    path(
+        "penalties/by-teacher/<int:teacher_id>/", views.get_teacher_students_penalties
+    ),
     path("penalties/create/", views.create_student_penalty),
     path("penalties/<int:penalty_id>/delete/", views.delete_student_penalty),
-    path("teachers/<int:teacher_id>/penalty-limit/", views.update_teacher_penalty_limit),
+    path(
+        "teachers/<int:teacher_id>/penalty-limit/", views.update_teacher_penalty_limit
+    ),
+    # ── Coins ── ✅ yangi
+    path("coins/student/<int:student_id>/", views.get_student_coins),
+    path("coins/transactions/<int:student_id>/", views.get_coin_transactions),
+    path("coins/give/", views.give_manual_coins),
+    path("leaderboard/", views.get_leaderboard),
+    # ── Magazine (Products) ── ✅ yangi
+    path("products/", views.get_products),
+    path("products/all/", views.get_all_products),
+    path("products/create/", views.create_product),
+    path("products/update/<int:product_id>/", views.update_product),
+    path("products/delete/<int:product_id>/", views.delete_product),
+    # ── Orders ── ✅ yangi
+    path("orders/create/", views.create_order),
+    path("orders/student/<int:student_id>/", views.get_student_orders),
+    path("orders/", views.get_all_orders),
+    path("orders/resolve/<int:order_id>/", views.resolve_order),
 ]
