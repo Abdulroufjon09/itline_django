@@ -6,10 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 # SECURITY
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    "django-insecure-change-this-key"
-)
+SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-change-this-key")
 
 # Read DEBUG from environment for deploy flexibility
 DEBUG = os.environ.get("DEBUG", "False").lower() in ("1", "true", "yes")
@@ -29,23 +26,19 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
     "rest_framework",
     "corsheaders",
-
     "register_withvue",
 ]
 
 
 # MIDDLEWARE
 MIDDLEWARE = [
+    "config.middleware.JsonExceptionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
-
     "django.middleware.security.SecurityMiddleware",
-
     # WhiteNoise static uchun
     "whitenoise.middleware.WhiteNoiseMiddleware",
-
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -81,6 +74,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 # DATABASE
 # Fallback to a local sqlite DB when DATABASE_URL is not provided
 sqlite_path = str(BASE_DIR / "db.sqlite3").replace("\\", "/")
+<<<<<<< HEAD
 DATABASES = {
     "default": dj_database_url.config(
         default=os.environ.get("DATABASE_URL"),
@@ -90,6 +84,27 @@ DATABASES = {
 
 
 
+=======
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+# If DATABASE_URL is set use dj_database_url to parse it, otherwise fall
+# back to a local sqlite database as the comment above intended.
+if isinstance(DATABASE_URL, bytes):
+    DATABASE_URL = DATABASE_URL.decode()
+
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": sqlite_path,
+        }
+    }
+>>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
 # When behind a proxy (Render), honor X-Forwarded-Proto for secure URLs
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -123,9 +138,7 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-STATICFILES_STORAGE = (
-    "whitenoise.storage.CompressedManifestStaticFilesStorage"
-)
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 
 # DEFAULT PRIMARY KEY

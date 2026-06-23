@@ -5,6 +5,7 @@ from .models import (
 )
 
 
+<<<<<<< HEAD
 @admin.register(Manager)
 class ManagerAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "surname", "phone", "is_active", "created_at")
@@ -87,3 +88,12 @@ class GroupAdmin(admin.ModelAdmin):
     def students_count(self, obj):
         return obj.students.count()
     students_count.short_description = "Studentlar soni"
+=======
+from .models import Student, Teacher, StagePrice, Lesson
+
+
+admin.site.register(Student)
+admin.site.register(Teacher)
+admin.site.register(Lesson)
+admin.site.register(StagePrice)
+>>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
