@@ -1,11 +1,18 @@
 from django.contrib import admin
 from .models import (
-    Manager, Student, Teacher, StagePrice,
-    Lesson, Attendance, Payment, StudentPenalty, CoinTransaction, Group
+    Manager,
+    Student,
+    Teacher,
+    StagePrice,
+    Lesson,
+    Attendance,
+    Payment,
+    StudentPenalty,
+    CoinTransaction,
+    Group,
 )
 
 
-<<<<<<< HEAD
 @admin.register(Manager)
 class ManagerAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "surname", "phone", "is_active", "created_at")
@@ -24,8 +31,17 @@ class TeacherAdmin(admin.ModelAdmin):
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = (
-        "id", "name", "surname", "phone", "teacher",
-        "stage", "schedule", "coin_balance", "is_admin", "is_excellence", "created_at"
+        "id",
+        "name",
+        "surname",
+        "phone",
+        "teacher",
+        "stage",
+        "schedule",
+        "coin_balance",
+        "is_admin",
+        "is_excellence",
+        "created_at",
     )
     list_filter = ("stage", "schedule", "is_admin", "is_excellence")
     search_fields = ("name", "surname", "phone")
@@ -33,10 +49,7 @@ class StudentAdmin(admin.ModelAdmin):
 
 @admin.register(CoinTransaction)
 class CoinTransactionAdmin(admin.ModelAdmin):
-    list_display = (
-        "id", "student", "amount", "reason",
-        "given_by_teacher", "given_by_manager", "created_at"
-    )
+    list_display = ("id", "student", "amount", "reason", "given_by", "created_at")
     list_filter = ("reason",)
     search_fields = ("student__name", "student__phone")
     ordering = ("-created_at",)
@@ -64,7 +77,15 @@ class AttendanceAdmin(admin.ModelAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("id", "student", "month", "stage", "amount_due", "is_paid", "paid_at")
+    list_display = (
+        "id",
+        "student",
+        "month",
+        "stage",
+        "amount_due",
+        "is_paid",
+        "paid_at",
+    )
     list_filter = ("is_paid", "month")
     search_fields = ("student__name",)
 
@@ -78,22 +99,16 @@ class StudentPenaltyAdmin(admin.ModelAdmin):
 
 @admin.register(Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "teacher", "created_at", "students_count")
+    list_display = ("id", "name", "get_teacher", "students_count")
     search_fields = ("name", "teacher__name")
     ordering = ("name",)
 
-    def teacher(self, obj):
+    def get_teacher(self, obj):
         return obj.teacher
+
+    get_teacher.short_description = "O'qituvchi"
 
     def students_count(self, obj):
         return obj.students.count()
-    students_count.short_description = "Studentlar soni"
-=======
-from .models import Student, Teacher, StagePrice, Lesson
 
-
-admin.site.register(Student)
-admin.site.register(Teacher)
-admin.site.register(Lesson)
-admin.site.register(StagePrice)
->>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
+    students_count.short_description = "O'quvchilar soni"
