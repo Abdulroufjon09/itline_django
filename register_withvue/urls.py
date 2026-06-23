@@ -78,18 +78,6 @@ urlpatterns = [
     ),
     path("penalties/create/", views.create_student_penalty),
     path("penalties/<int:penalty_id>/delete/", views.delete_student_penalty),
-<<<<<<< HEAD
-
-    # ─────────────────────────────────────
-    # GROUPS
-    # ─────────────────────────────────────
-    # GROUPS
-path("groups/", views.get_groups),
-path("groups/<int:group_id>/", views.get_group),
-path("groups/create/", views.create_group),
-path("groups/update/<int:group_id>/", views.update_group),
-path("groups/delete/<int:group_id>/", views.delete_group),
-=======
     path(
         "teachers/<int:teacher_id>/penalty-limit/", views.update_teacher_penalty_limit
     ),
@@ -109,5 +97,10 @@ path("groups/delete/<int:group_id>/", views.delete_group),
     path("orders/student/<int:student_id>/", views.get_student_orders),
     path("orders/", views.get_all_orders),
     path("orders/resolve/<int:order_id>/", views.resolve_order),
->>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
+    # ✅ TO'G'RI tartib — aniq URL'lar avval!
+path("groups/", views.get_groups),
+path("groups/create/", views.create_group),          # avval
+path("groups/update/<int:group_id>/", views.update_group),
+path("groups/delete/<int:group_id>/", views.delete_group),
+path("groups/<int:group_id>/", views.get_group),     # keyin
 ]
