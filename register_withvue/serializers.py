@@ -1,27 +1,20 @@
 from rest_framework import serializers
-from .models import Student, Teacher, Group
-
-
-class TeacherSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Teacher
-        fields = ["id", "name", "phone"]
+from .models import Student, Group
 
 
 class StudentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Student
-        fields = ["id", "name", "surname", "phone", "stage"]
+        fields = ["name", "surname", "phone", "teacher"]
 
 
 class GroupSerializer(serializers.ModelSerializer):
-    teacher = TeacherSerializer(read_only=True)
-    students = StudentSerializer(many=True, read_only=True)
     students_count = serializers.SerializerMethodField()
+    students = StudentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Group
-        fields = ["id", "name", "teacher", "students", "students_count", "lesson_time"]
+        fields = "__all__"
 
     def get_students_count(self, obj):
         return obj.students.count()
