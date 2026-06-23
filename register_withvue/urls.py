@@ -55,4 +55,10 @@ urlpatterns = [
     path("orders/student/<int:student_id>/", views.get_student_orders),
     path("orders/", views.get_all_orders),
     path("orders/resolve/<int:order_id>/", views.resolve_order),
+    # ── Groups ── ✅ yangi
+    path("groups/", views.get_groups),
+    path("groups/create/", views.create_group),  # avval
+    path("groups/update/<int:group_id>/", views.update_group),
+    path("groups/delete/<int:group_id>/", views.delete_group),
+    path("groups/<int:group_id>/", views.get_group),  # keyin
 ]

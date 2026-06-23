@@ -74,6 +74,13 @@ WSGI_APPLICATION = "config.wsgi.application"
 # DATABASE
 # Fallback to a local sqlite DB when DATABASE_URL is not provided
 sqlite_path = str(BASE_DIR / "db.sqlite3").replace("\\", "/")
+DATABASES = {
+    "default": dj_database_url.config(
+        default=os.environ.get("DATABASE_URL"),
+        conn_max_age=600,
+    )
+}
+
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -83,9 +90,7 @@ if isinstance(DATABASE_URL, bytes):
     DATABASE_URL = DATABASE_URL.decode()
 
 if DATABASE_URL:
-    DATABASES = {
-        "default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)
-    }
+    DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
 else:
     DATABASES = {
         "default": {

@@ -6,11 +6,23 @@ from django.db.models import Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
+from django.db import models as db_models
 
 from .models import (
-    Student, Teacher, Lesson, Attendance, Payment, StagePrice, StudentPenalty,
-    CoinTransaction, Product, Order,
+    Student,
+    Teacher,
+    Lesson,
+    Attendance,
+    Payment,
+    StagePrice,
+    StudentPenalty,
+    Manager,
+    CoinTransaction,
+    Product,
+    Order,
+    Group,
 )
+from .serializers import GroupSerializer
 
 ADMIN_PASSWORD = "excel2024"
 EXCELLENCE_PASSWORD = "excellence2024"
@@ -18,7 +30,6 @@ EXCELLENCE_PASSWORD = "excellence2024"
 ODD_DAYS = {0, 2, 4}
 EVEN_DAYS = {1, 3, 5}
 
-# Attendance status o'zgarganda avtomatik beriladigan coinlar
 ATTENDANCE_COINS = {
     "present": 10,
     "late": 5,
@@ -48,9 +59,11 @@ def get_schedule_for_day(weekday):
     return None
 
 
-def apply_coin_transaction(student, amount, reason, given_by=None, note="", attendance=None):
+def apply_coin_transaction(
+    student, amount, reason, given_by=None, note="", attendance=None
+):
     """
-    Coin tranzaksiyasini yozadi va Student.coins ni shu summaga yangilaydi.
+    Coin tranzaksiyasini yozadi va Student.coin_balance ni yangilaydi.
     amount musbat yoki manfiy bo'lishi mumkin.
     """
     CoinTransaction.objects.create(
@@ -61,24 +74,327 @@ def apply_coin_transaction(student, amount, reason, given_by=None, note="", atte
         note=note,
         attendance=attendance,
     )
-    student.coins = (student.coins or 0) + amount
-    student.save(update_fields=["coins"])
-    return student.coins
+    student.coin_balance = (student.coin_balance or 0) + amount
+    student.save(update_fields=["coin_balance"])
+    return student.coin_balance
+
+
+# ─────────────────────────────────────────
+# MANAGER
+# ─────────────────────────────────────────
+
+
+@csrf_exempt
+def manager_register(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        phone = data.get("phone", "").strip()
+
+        if Manager.objects.filter(phone=phone).exists():
+            return JsonResponse(
+                {"error": "Bu telefon raqam allaqachon ro'yxatdan o'tgan"}, status=400
+            )
+
+        manager = Manager.objects.create(
+            name=data.get("name", "").strip(),
+            surname=data.get("surname", "").strip(),
+            phone=phone,
+            password=make_password(data.get("password", "")),
+        )
+        return JsonResponse(
+            {
+                "id": manager.id,
+                "name": manager.name,
+                "surname": manager.surname,
+                "phone": manager.phone,
+                "role": "manager",
+            },
+            status=201,
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def manager_login(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        phone = data.get("phone", "")
+        password = data.get("password", "")
+
+        manager = Manager.objects.filter(phone=phone, is_active=True).first()
+        if not manager:
+            return JsonResponse({"error": "Menejer topilmadi"}, status=404)
+
+        if not check_password(password, manager.password):
+            return JsonResponse({"error": "Parol noto'g'ri"}, status=401)
+
+        return JsonResponse(
+            {
+                "id": manager.id,
+                "name": manager.name,
+                "surname": manager.surname,
+                "phone": manager.phone,
+                "role": "manager",
+                "is_active": manager.is_active,
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+def get_managers(request):
+    managers = list(
+        Manager.objects.filter(is_active=True).values(
+            "id", "name", "surname", "phone", "is_active", "created_at"
+        )
+    )
+    return JsonResponse(managers, safe=False)
+
+
+@csrf_exempt
+def update_manager(request, manager_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        manager = Manager.objects.filter(id=manager_id).first()
+        if not manager:
+            return JsonResponse({"error": "Menejer topilmadi"}, status=404)
+
+        if "name" in data:
+            manager.name = data["name"]
+        if "surname" in data:
+            manager.surname = data["surname"]
+        if "phone" in data:
+            manager.phone = data["phone"]
+        if "password" in data and data["password"]:
+            manager.password = make_password(data["password"])
+        if "is_active" in data:
+            manager.is_active = data["is_active"]
+        manager.save()
+        return JsonResponse({"message": "Menejer ma'lumotlari yangilandi!"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_manager(request, manager_id):
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    manager = Manager.objects.filter(id=manager_id).first()
+    if not manager:
+        return JsonResponse({"error": "Menejer topilmadi"}, status=404)
+    manager.is_active = False
+    manager.save()
+    return JsonResponse({"message": "Menejer deaktivatsiya qilindi!"})
+
+
+# ─────────────────────────────────────────
+# COIN
+# ─────────────────────────────────────────
+
+
+def get_coin_balance(request, student_id):
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return JsonResponse({"error": "Student topilmadi"}, status=404)
+    return JsonResponse(
+        {
+            "student_id": student.id,
+            "student_name": f"{student.name} {student.surname}",
+            "coin_balance": student.coin_balance,
+        }
+    )
+
+
+def get_coin_transactions(request, student_id):
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+    qs = (
+        CoinTransaction.objects.filter(student_id=student_id)
+        .select_related("given_by")
+        .order_by("-created_at")
+    )
+
+    data = [
+        {
+            "id": t.id,
+            "amount": t.amount,
+            "reason": t.reason,
+            "reason_display": t.get_reason_display(),
+            "note": t.note,
+            "given_by": t.given_by.name if t.given_by else "Tizim",
+            "created_at": t.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+        for t in qs
+    ]
+    return JsonResponse(
+        {
+            "student_id": student.id,
+            "student_name": f"{student.name} {student.surname}",
+            "coin_balance": student.coin_balance,
+            "transactions": data,
+        }
+    )
+
+
+def get_all_coin_balances(request):
+    teacher_id = request.GET.get("teacher_id", "")
+    qs = (
+        Student.objects.select_related("teacher")
+        .filter(is_admin=False, is_excellence=False)
+        .order_by("-coin_balance")
+    )
+
+    if teacher_id:
+        try:
+            qs = qs.filter(teacher_id=int(teacher_id))
+        except ValueError:
+            pass
+
+    data = [
+        {
+            "student_id": s.id,
+            "name": s.name,
+            "surname": s.surname,
+            "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
+            "coin_balance": s.coin_balance,
+        }
+        for s in qs
+    ]
+    return JsonResponse(data, safe=False)
+
+
+@csrf_exempt
+def add_coin(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+
+        student = Student.objects.filter(id=data.get("student_id")).first()
+        if not student:
+            return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+        amount = data.get("amount")
+        if amount is None:
+            return JsonResponse({"error": "amount kiritilmadi"}, status=400)
+        amount = int(amount)
+
+        if student.coin_balance + amount < 0:
+            return JsonResponse(
+                {"error": f"Yetarli coin yo'q. Joriy balans: {student.coin_balance}"},
+                status=400,
+            )
+
+        given_by = None
+        if data.get("teacher_id"):
+            given_by = Teacher.objects.filter(id=data["teacher_id"]).first()
+
+        new_balance = apply_coin_transaction(
+            student,
+            amount,
+            data.get("reason", "manual"),
+            given_by=given_by,
+            note=data.get("description", ""),
+        )
+
+        return JsonResponse(
+            {
+                "message": "Coin qo'shildi!" if amount >= 0 else "Coin ayirildi!",
+                "amount": amount,
+                "new_balance": new_balance,
+            },
+            status=201,
+        )
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_coin_transaction(request, txn_id):
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    txn = CoinTransaction.objects.filter(id=txn_id).first()
+    if not txn:
+        return JsonResponse({"error": "Tranzaksiya topilmadi"}, status=404)
+
+    Student.objects.filter(pk=txn.student_id).update(
+        coin_balance=db_models.F("coin_balance") - txn.amount
+    )
+    txn.delete()
+    return JsonResponse(
+        {"message": "Tranzaksiya bekor qilindi va balans qayta hisoblandi!"}
+    )
+
+
+@csrf_exempt
+def set_coin_balance(request, student_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        new_balance = data.get("coin_balance")
+
+        if new_balance is None:
+            return JsonResponse({"error": "coin_balance kiritilmadi"}, status=400)
+
+        student = Student.objects.filter(id=student_id).first()
+        if not student:
+            return JsonResponse({"error": "Student topilmadi"}, status=404)
+
+        given_by = None
+        if data.get("teacher_id"):
+            given_by = Teacher.objects.filter(id=data["teacher_id"]).first()
+
+        diff = int(new_balance) - student.coin_balance
+        if diff == 0:
+            return JsonResponse(
+                {"message": "Balans o'zgarmadi", "coin_balance": student.coin_balance}
+            )
+
+        apply_coin_transaction(
+            student,
+            diff,
+            "manual",
+            given_by=given_by,
+            note=f"Balans to'g'ridan-to'g'ri {new_balance} ga o'rnatildi",
+        )
+
+        student.refresh_from_db()
+        return JsonResponse(
+            {
+                "message": "Balans yangilandi!",
+                "coin_balance": student.coin_balance,
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
 
 
 # ─────────────────────────────────────────
 # TEACHERS
 # ─────────────────────────────────────────
 
+
 def get_teachers(request):
     try:
         teachers = list(
-            Teacher.objects.all().values("id", "name", "phone", "is_senior", "penalty_limit")
+            Teacher.objects.all().values(
+                "id", "name", "phone", "is_senior", "penalty_limit"
+            )
         )
         return JsonResponse(teachers, safe=False)
     except Exception as e:
-        # Return JSON error (prevents frontend JSON.parse errors when server
-        # returns HTML error pages). Keep field names unchanged for Vue.
         return JsonResponse({"error": str(e)}, status=500)
 
 
@@ -163,6 +479,7 @@ def reassign_students(request):
 # STAGE PRICES
 # ─────────────────────────────────────────
 
+
 def get_stage_prices(request):
     prices = list(
         StagePrice.objects.all().order_by("stage").values("id", "stage", "price")
@@ -191,6 +508,7 @@ def update_stage_price(request, stage):
 # STUDENTS
 # ─────────────────────────────────────────
 
+
 def get_students(request):
     teacher_id = request.GET.get("teacher_id")
     qs = Student.objects.select_related("teacher").filter(
@@ -211,7 +529,7 @@ def get_students(request):
             "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
             "stage": s.stage,
             "schedule": s.schedule,
-            "coins": s.coins,
+            "coin_balance": s.coin_balance,
         }
         for s in qs
     ]
@@ -224,7 +542,9 @@ def update_student(request, student_id):
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
         data = json.loads(request.body)
-        student = Student.objects.select_related("teacher").filter(id=student_id).first()
+        student = (
+            Student.objects.select_related("teacher").filter(id=student_id).first()
+        )
         if not student:
             return JsonResponse({"error": "Student topilmadi"}, status=404)
 
@@ -239,13 +559,15 @@ def update_student(request, student_id):
             student.schedule = data["schedule"]
 
         student.save()
-        return JsonResponse({
-            "message": "Yangilandi!",
-            "stage": student.stage,
-            "schedule": student.schedule,
-            "teacher_id": student.teacher_id,
-            "teacher_name": student.teacher.name if student.teacher else "",
-        })
+        return JsonResponse(
+            {
+                "message": "Yangilandi!",
+                "stage": student.stage,
+                "schedule": student.schedule,
+                "teacher_id": student.teacher_id,
+                "teacher_name": student.teacher.name if student.teacher else "",
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -291,19 +613,23 @@ def register_student(request):
             student.teacher = new_teacher
             student.save()
 
-        return JsonResponse({
-            "message": "Muvaffaqiyatli!",
-            "id": student.id,
-            "name": student.name,
-            "surname": student.surname,
-            "phone": student.phone,
-            "teacher_id": student.teacher_id,
-            "teacher_name": student.teacher.name if student.teacher else "",
-            "stage": student.stage,
-            "schedule": student.schedule,
-            "is_admin": student.is_admin,
-            "is_excellence": student.is_excellence,
-        }, status=201)
+        return JsonResponse(
+            {
+                "message": "Muvaffaqiyatli!",
+                "id": student.id,
+                "name": student.name,
+                "surname": student.surname,
+                "phone": student.phone,
+                "teacher_id": student.teacher_id,
+                "teacher_name": student.teacher.name if student.teacher else "",
+                "stage": student.stage,
+                "schedule": student.schedule,
+                "is_admin": student.is_admin,
+                "is_excellence": student.is_excellence,
+                "coin_balance": student.coin_balance,
+            },
+            status=201,
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -323,25 +649,31 @@ def login_student(request):
             return JsonResponse({"exists": bool(student)})
 
         if not student:
-            return JsonResponse({"exists": False, "error": "Foydalanuvchi topilmadi"}, status=404)
+            return JsonResponse(
+                {"exists": False, "error": "Foydalanuvchi topilmadi"}, status=404
+            )
 
         if not check_password(password, student.password):
-            return JsonResponse({"exists": False, "error": "Parol noto'g'ri"}, status=401)
+            return JsonResponse(
+                {"exists": False, "error": "Parol noto'g'ri"}, status=401
+            )
 
-        return JsonResponse({
-            "exists": True,
-            "id": student.id,
-            "name": student.name,
-            "surname": student.surname,
-            "phone": student.phone,
-            "teacher_id": student.teacher_id,
-            "teacher_name": student.teacher.name if student.teacher else "",
-            "is_admin": student.is_admin,
-            "is_excellence": student.is_excellence,
-            "stage": student.stage,
-            "schedule": student.schedule,
-            "coins": student.coins,
-        })
+        return JsonResponse(
+            {
+                "exists": True,
+                "id": student.id,
+                "name": student.name,
+                "surname": student.surname,
+                "phone": student.phone,
+                "teacher_id": student.teacher_id,
+                "teacher_name": student.teacher.name if student.teacher else "",
+                "is_admin": student.is_admin,
+                "is_excellence": student.is_excellence,
+                "stage": student.stage,
+                "schedule": student.schedule,
+                "coin_balance": student.coin_balance,
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -349,6 +681,7 @@ def login_student(request):
 # ─────────────────────────────────────────
 # LESSONS
 # ─────────────────────────────────────────
+
 
 def get_lessons(request):
     teacher_id = request.GET.get("teacher_id", "")
@@ -399,11 +732,14 @@ def create_lesson(request):
                 defaults={"status": "absent"},
             )
 
-        return JsonResponse({
-            "id": lesson.id,
-            "message": "Dars yaratildi!",
-            "schedule": schedule_for_day,
-        }, status=201)
+        return JsonResponse(
+            {
+                "id": lesson.id,
+                "message": "Dars yaratildi!",
+                "schedule": schedule_for_day,
+            },
+            status=201,
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -412,8 +748,11 @@ def create_lesson(request):
 # ATTENDANCE
 # ─────────────────────────────────────────
 
+
 def get_attendance(request, lesson_id):
-    attendances = Attendance.objects.filter(lesson_id=lesson_id).select_related("student")
+    attendances = Attendance.objects.filter(lesson_id=lesson_id).select_related(
+        "student"
+    )
     data = [
         {
             "id": a.id,
@@ -429,17 +768,15 @@ def get_attendance(request, lesson_id):
 
 @csrf_exempt
 def update_attendance(request, attendance_id):
-    """
-    Status yangilanganda avtomatik coin beriladi/ayiriladi:
-    present +10, late +5, absent -10.
-    Agar status avval ham xuddi shu bo'lsa, qayta coin berilmaydi (idempotent).
-    Status o'zgarsa, eski statusning coini bekor qilinib, yangisi qo'llanadi.
-    """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
         data = json.loads(request.body)
-        attendance = Attendance.objects.select_related("student").filter(id=attendance_id).first()
+        attendance = (
+            Attendance.objects.select_related("student")
+            .filter(id=attendance_id)
+            .first()
+        )
         if not attendance:
             return JsonResponse({"error": "Attendance topilmadi"}, status=404)
 
@@ -453,7 +790,6 @@ def update_attendance(request, attendance_id):
             if new_status != old_status:
                 student = attendance.student
 
-                # Eski statusga berilgan coinni bekor qilamiz (agar bor bo'lsa)
                 if old_status in ATTENDANCE_COINS:
                     apply_coin_transaction(
                         student,
@@ -463,7 +799,6 @@ def update_attendance(request, attendance_id):
                         attendance=attendance,
                     )
 
-                # Yangi statusga coin beramiz
                 if new_status in ATTENDANCE_COINS:
                     apply_coin_transaction(
                         student,
@@ -476,7 +811,13 @@ def update_attendance(request, attendance_id):
             attendance.status = new_status
             attendance.save()
 
-        return JsonResponse({"message": "Yangilandi!", "coins": attendance.student.coins})
+        attendance.student.refresh_from_db()
+        return JsonResponse(
+            {
+                "message": "Yangilandi!",
+                "coin_balance": attendance.student.coin_balance,
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -530,6 +871,7 @@ def get_monthly_absences(request):
 # STUDENT PENALTIES
 # ─────────────────────────────────────────
 
+
 def get_student_penalties(request, student_id):
     penalties = StudentPenalty.objects.filter(student_id=student_id).order_by("-date")
     data = [
@@ -548,10 +890,11 @@ def get_student_penalties(request, student_id):
 
 
 def get_teacher_students_penalties(request, teacher_id):
-    """Teacher o'z studentlarining ja'zolarini ko'radi"""
-    penalties = StudentPenalty.objects.filter(
-        student__teacher_id=teacher_id
-    ).select_related("student").order_by("-date")
+    penalties = (
+        StudentPenalty.objects.filter(student__teacher_id=teacher_id)
+        .select_related("student")
+        .order_by("-date")
+    )
     data = [
         {
             "id": p.id,
@@ -589,7 +932,9 @@ def create_student_penalty(request):
             description=data.get("description", ""),
             amount=data.get("amount", 0),
         )
-        return JsonResponse({"id": penalty.id, "message": "Ja'zo qo'shildi"}, status=201)
+        return JsonResponse(
+            {"id": penalty.id, "message": "Ja'zo qo'shildi"}, status=201
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -608,6 +953,7 @@ def delete_student_penalty(request, penalty_id):
 # ─────────────────────────────────────────
 # PAYMENTS
 # ─────────────────────────────────────────
+
 
 def get_payments(request, student_id):
     payments = Payment.objects.filter(student_id=student_id).order_by("-month")
@@ -679,10 +1025,12 @@ def generate_payments(request):
             else:
                 skipped_count += 1
 
-        return JsonResponse({
-            "message": f"{created_count} ta yangi to'lov yaratildi, {skipped_count} ta mavjud edi.",
-            "month": month,
-        })
+        return JsonResponse(
+            {
+                "message": f"{created_count} ta yangi to'lov yaratildi, {skipped_count} ta mavjud edi.",
+                "month": month,
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -716,55 +1064,132 @@ def update_payment_amount(request, payment_id):
         if "amount_due" in data:
             payment.amount_due = data["amount_due"]
         payment.save()
-        return JsonResponse({
-            "message": "Summa yangilandi!",
-            "amount_due": payment.amount_due,
-        })
+        return JsonResponse(
+            {
+                "message": "Summa yangilandi!",
+                "amount_due": payment.amount_due,
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
 
 # ─────────────────────────────────────────
-# COINS
+# GROUPS
 # ─────────────────────────────────────────
 
+
+def get_groups(request):
+    groups = Group.objects.select_related("teacher").prefetch_related("students")
+    serializer = GroupSerializer(groups, many=True)
+    return JsonResponse(serializer.data, safe=False)
+
+
+def get_group(request, group_id):
+    group = Group.objects.filter(id=group_id).first()
+    if not group:
+        return JsonResponse({"error": "Group topilmadi"}, status=404)
+    serializer = GroupSerializer(group)
+    return JsonResponse(serializer.data, safe=False)
+
+
+@csrf_exempt
+def create_group(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+
+        teacher = None
+        if data.get("teacher_id"):
+            teacher = Teacher.objects.filter(id=data.get("teacher_id")).first()
+
+        group = Group.objects.create(
+            name=data.get("name"),
+            teacher=teacher,
+            lesson_time=data.get("lesson_time"),
+        )
+
+        student_ids = data.get("students", [])
+        if student_ids:
+            group.students.set(student_ids)
+
+        serializer = GroupSerializer(group)
+        return JsonResponse(serializer.data, status=201)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def update_group(request, group_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+
+        group = Group.objects.filter(id=group_id).first()
+        if not group:
+            return JsonResponse({"error": "Group topilmadi"}, status=404)
+
+        if "name" in data:
+            group.name = data["name"]
+
+        if "teacher_id" in data:
+            group.teacher = Teacher.objects.filter(id=data["teacher_id"]).first()
+
+        if "lesson_time" in data:
+            lesson_time_str = data["lesson_time"]
+            try:
+                group.lesson_time = datetime.strptime(lesson_time_str, "%H:%M").time()
+            except ValueError:
+                return JsonResponse(
+                    {"error": "Noto'g'ri vaqt formati. HH:MM bo'lishi kerak."},
+                    status=400,
+                )
+
+        group.save()
+
+        if "students" in data:
+            group.students.set(data["students"])
+
+        serializer = GroupSerializer(group)
+        return JsonResponse(serializer.data, safe=False)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_group(request, group_id):
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    group = Group.objects.filter(id=group_id).first()
+    if not group:
+        return JsonResponse({"error": "Group topilmadi"}, status=404)
+    group.delete()
+    return JsonResponse({"message": "Group o'chirildi!"})
+
+
+# ─────────────────────────────────────────
+# COINS (student ko'rinishi)
+# ─────────────────────────────────────────
+
+
 def get_student_coins(request, student_id):
-    """Student faqat o'z coinini ko'rishi uchun (frontend 'faqat coins ko'rinishi' talabi)."""
     student = Student.objects.filter(id=student_id).first()
     if not student:
         return JsonResponse({"error": "Student topilmadi"}, status=404)
-    return JsonResponse({"student_id": student.id, "coins": student.coins})
-
-
-def get_coin_transactions(request, student_id):
-    """Student/teacher uchun coin tarixi (ixtiyoriy, lekin foydali bo'ladi)."""
-    qs = CoinTransaction.objects.filter(student_id=student_id).select_related(
-        "given_by"
-    ).order_by("-created_at")
-    data = [
+    return JsonResponse(
         {
-            "id": t.id,
-            "reason": t.reason,
-            "reason_display": t.get_reason_display(),
-            "amount": t.amount,
-            "note": t.note,
-            "given_by": t.given_by.name if t.given_by else "Tizim",
-            "created_at": t.created_at.strftime("%Y-%m-%d %H:%M"),
+            "student_id": student.id,
+            "coin_balance": student.coin_balance,
         }
-        for t in qs
-    ]
-    return JsonResponse(data, safe=False)
+    )
 
 
 @csrf_exempt
 def give_manual_coins(request):
-    """
-    Teacher o'z studentiga hohlagan miqdorda coin beradi.
-    Sabab: imtihon (+80 default), vazifa (+/-20 default) yoki erkin 'manual' miqdor.
-    Body: { student_id, teacher_id, reason, amount (optional), note (optional) }
-    Agar reason='exam_pass' yoki 'homework_done'/'homework_missed' bo'lsa va amount
-    berilmasa, default qiymatlar ishlatiladi. Aks holda amount majburiy.
-    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -798,20 +1223,19 @@ def give_manual_coins(request):
             note=data.get("note", ""),
         )
 
-        return JsonResponse({
-            "message": "Coin berildi!",
-            "student_id": student.id,
-            "coins": new_balance,
-        }, status=201)
+        return JsonResponse(
+            {
+                "message": "Coin berildi!",
+                "student_id": student.id,
+                "coin_balance": new_balance,
+            },
+            status=201,
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
 
 def get_leaderboard(request):
-    """
-    Eng ko'p coin to'plagan studentlar reytingi.
-    Ixtiyoriy: ?teacher_id= bilan faqat shu teacher studentlari orasida reyting.
-    """
     teacher_id = request.GET.get("teacher_id", "")
     qs = Student.objects.select_related("teacher").filter(
         is_admin=False, is_excellence=False
@@ -819,7 +1243,7 @@ def get_leaderboard(request):
     if teacher_id:
         qs = qs.filter(teacher_id=teacher_id)
 
-    qs = qs.order_by("-coins", "name")[:100]
+    qs = qs.order_by("-coin_balance", "name")[:100]
 
     data = [
         {
@@ -828,7 +1252,7 @@ def get_leaderboard(request):
             "name": s.name,
             "surname": s.surname,
             "teacher_name": s.teacher.name if s.teacher else "",
-            "coins": s.coins,
+            "coin_balance": s.coin_balance,
         }
         for i, s in enumerate(qs)
     ]
@@ -839,8 +1263,8 @@ def get_leaderboard(request):
 # MAGAZINE (DO'KON)
 # ─────────────────────────────────────────
 
+
 def get_products(request):
-    """Student/umumiy ko'rinish uchun: faqat aktiv mahsulotlar."""
     qs = Product.objects.filter(is_active=True).order_by("price_coins")
     data = [
         {
@@ -857,7 +1281,6 @@ def get_products(request):
 
 
 def get_all_products(request):
-    """Admin uchun: faol va nofaol barcha mahsulotlar."""
     qs = Product.objects.all().order_by("-created_at")
     data = [
         {
@@ -888,7 +1311,9 @@ def create_product(request):
             is_active=data.get("is_active", True),
             stock=data.get("stock"),
         )
-        return JsonResponse({"id": product.id, "message": "Mahsulot qo'shildi!"}, status=201)
+        return JsonResponse(
+            {"id": product.id, "message": "Mahsulot qo'shildi!"}, status=201
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -930,17 +1355,12 @@ def delete_product(request, product_id):
 
 
 # ─────────────────────────────────────────
-# ORDERS (Magazindan xarid)
+# ORDERS
 # ─────────────────────────────────────────
+
 
 @csrf_exempt
 def create_order(request):
-    """
-    Student coin sarflab mahsulot buyurtma qiladi.
-    Coin darhol ayiriladi (rezerv qilinadi), status='pending' bo'lib qoladi.
-    Admin/teacher keyin approve yoki reject qiladi (reject bo'lsa coin qaytariladi).
-    Body: { student_id, product_id }
-    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -949,14 +1369,18 @@ def create_order(request):
         if not student:
             return JsonResponse({"error": "Student topilmadi"}, status=404)
 
-        product = Product.objects.filter(id=data.get("product_id"), is_active=True).first()
+        product = Product.objects.filter(
+            id=data.get("product_id"), is_active=True
+        ).first()
         if not product:
-            return JsonResponse({"error": "Mahsulot topilmadi yoki faol emas"}, status=404)
+            return JsonResponse(
+                {"error": "Mahsulot topilmadi yoki faol emas"}, status=404
+            )
 
         if product.stock is not None and product.stock <= 0:
             return JsonResponse({"error": "Mahsulot tugagan"}, status=400)
 
-        if student.coins < product.price_coins:
+        if student.coin_balance < product.price_coins:
             return JsonResponse({"error": "Coin yetarli emas"}, status=400)
 
         with transaction.atomic():
@@ -979,11 +1403,14 @@ def create_order(request):
                 product.stock -= 1
                 product.save(update_fields=["stock"])
 
-        return JsonResponse({
-            "id": order.id,
-            "message": "Buyurtma yaratildi!",
-            "coins": student.coins,
-        }, status=201)
+        return JsonResponse(
+            {
+                "id": order.id,
+                "message": "Buyurtma yaratildi!",
+                "coin_balance": student.coin_balance,
+            },
+            status=201,
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -1004,7 +1431,6 @@ def get_student_orders(request, student_id):
 
 
 def get_all_orders(request):
-    """Admin uchun: barcha buyurtmalar (kerak bo'lsa status bo'yicha filter)."""
     status = request.GET.get("status", "")
     qs = Order.objects.select_related("student").order_by("-created_at")
     if status:
@@ -1026,11 +1452,6 @@ def get_all_orders(request):
 
 @csrf_exempt
 def resolve_order(request, order_id):
-    """
-    Admin buyurtmani tasdiqlaydi (approved) yoki rad etadi (rejected).
-    Rad etilsa, sarflangan coin studentga qaytariladi.
-    Body: { status: 'approved' | 'rejected' }
-    """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -1044,7 +1465,9 @@ def resolve_order(request, order_id):
             return JsonResponse({"error": "Buyurtma topilmadi"}, status=404)
 
         if order.status != "pending":
-            return JsonResponse({"error": "Bu buyurtma allaqachon hal qilingan"}, status=400)
+            return JsonResponse(
+                {"error": "Bu buyurtma allaqachon hal qilingan"}, status=400
+            )
 
         with transaction.atomic():
             if new_status == "rejected":
