@@ -62,3 +62,5 @@ urlpatterns = [
     path("groups/delete/<int:group_id>/", views.delete_group),
     path("groups/<int:group_id>/", views.get_group),  # keyin
 ]
+
+app_name = "register_withvue"
