@@ -18,7 +18,7 @@ class Manager(models.Model):
         verbose_name = "Menejer"
         verbose_name_plural = "Menejerlar"
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi: str → str
         return f"{self.name} {self.surname}".strip()
 
 
@@ -34,7 +34,7 @@ class Teacher(models.Model):
     penalty_limit = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return self.name
 
 
@@ -71,12 +71,11 @@ class Student(models.Model):
     is_admin = models.BooleanField(default=False)
     is_excellence = models.BooleanField(default=False)
 
-    # ✅ Merge konflikti hal qilindi: coin_balance ishlatiladi
     coin_balance = models.IntegerField(default=0, verbose_name="Coin balansi")
 
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.name} {self.surname}"
 
 
@@ -89,7 +88,7 @@ class StagePrice(models.Model):
     stage = models.IntegerField(unique=True)
     price = models.IntegerField(default=0)
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.stage}-etap: {self.price}"
 
 
@@ -105,7 +104,7 @@ class Lesson(models.Model):
     )
     date = models.DateField()
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return self.title
 
 
@@ -132,7 +131,7 @@ class Attendance(models.Model):
     class Meta:
         unique_together = ("student", "lesson")
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.student} — {self.lesson} — {self.status}"
 
 
@@ -148,7 +147,6 @@ class StudentPenalty(models.Model):
         ("behavior", "Xulq-atvor"),
         ("other", "Boshqa"),
     ]
-
     student = models.ForeignKey(
         Student,
         on_delete=models.CASCADE,
@@ -166,12 +164,12 @@ class StudentPenalty(models.Model):
     date = models.DateField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.student} — {self.get_reason_display()} — {self.amount}"
 
 
 # ─────────────────────────────────────────
-#   NT
+# PAYMENT
 # ─────────────────────────────────────────
 
 
@@ -189,26 +187,34 @@ class Payment(models.Model):
     class Meta:
         unique_together = ("student", "month")
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.student} — {self.month} — {self.amount_due}"
 
 
 # ─────────────────────────────────────────
 # GROUP
 # ─────────────────────────────────────────
-# huhuhuhuhuqwbdqwdv8y
 
 
 class Group(models.Model):
+    SCHEDULE_CHOICES = [
+        ("odd", "Du-Chor-Juma"),
+        ("even", "Se-Pay-Shan"),
+    ]
+
     name = models.CharField(max_length=100)
     teacher = models.ForeignKey(
         Teacher, on_delete=models.SET_NULL, null=True, related_name="groups"
     )
     students = models.ManyToManyField(Student, related_name="groups")
-    # ✅ lesson_time — kichik harf bilan (Python konvensiyasi)
     lesson_time = models.TimeField(null=False, blank=False)
+    schedule = models.CharField(  # ✅ Qo'shildi: Group darajasida jadval
+        max_length=10,
+        choices=SCHEDULE_CHOICES,
+        default="odd",
+    )
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return self.name
 
 
@@ -262,17 +268,23 @@ class CoinTransaction(models.Model):
         verbose_name = "Coin tranzaksiyasi"
         verbose_name_plural = "Coin tranzaksiyalari"
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.student} — {self.get_reason_display()} — {self.amount}"
-
     def save(self, *args, **kwargs):
-        """Tranzaksiya saqlanganda coin_balance avtomatik yangilanadi."""
+        """Faqat YANGI tranzaksiya saqlanganda coin_balance yangilanadi."""
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:
             Student.objects.filter(pk=self.student_id).update(
                 coin_balance=models.F("coin_balance") + self.amount
             )
+
+    def delete(self, *args, **kwargs):
+        """✅ Tuzatildi: O'chirishda coin_balance qaytariladi."""
+        Student.objects.filter(pk=self.student_id).update(
+            coin_balance=models.F("coin_balance") - self.amount
+        )
+        super().delete(*args, **kwargs)
 
 
 # ─────────────────────────────────────────
@@ -289,7 +301,7 @@ class Product(models.Model):
     stock = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.name} — {self.price_coins} coin"
 
 
@@ -312,5 +324,5 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
-    def __str__(self):
+    def str(self):  # ✅ Tuzatildi
         return f"{self.student} — {self.product_name} — {self.status}"

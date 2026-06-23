@@ -10,17 +10,10 @@ from django.db import models as db_models
 from .models import Group
 from .serializers import GroupSerializer
 
-<<<<<<< HEAD
-
-
 from .models import (
     Student, Teacher, Lesson, Attendance, Payment,
     StagePrice, StudentPenalty, Manager, CoinTransaction,
-=======
-from .models import (
-    Student, Teacher, Lesson, Attendance, Payment, StagePrice, StudentPenalty,
-    CoinTransaction, Product, Order,
->>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
+    Product, Order,
 )
 
 ADMIN_PASSWORD = "excel2024"
@@ -61,7 +54,9 @@ def get_schedule_for_day(weekday):
 
 def apply_coin_transaction(student, amount, reason, given_by=None, note="", attendance=None):
     """
-    Coin tranzaksiyasini yozadi va Student.coins ni shu summaga yangilaydi.
+    Coin tranzaksiyasini yozadi. Student.coin_balance ni CoinTransaction.save()
+    o'zi avtomatik (F() orqali) yangilaydi, shuning uchun bu yerda qo'lda
+    mavjud bo'lmagan "coins" maydonini yangilashga urinmaymiz.
     amount musbat yoki manfiy bo'lishi mumkin.
     """
     CoinTransaction.objects.create(
@@ -72,9 +67,8 @@ def apply_coin_transaction(student, amount, reason, given_by=None, note="", atte
         note=note,
         attendance=attendance,
     )
-    student.coins = (student.coins or 0) + amount
-    student.save(update_fields=["coins"])
-    return student.coins
+    student.refresh_from_db(fields=["coin_balance"])
+    return student.coin_balance
 
 
 # ─────────────────────────────────────────
@@ -208,42 +202,6 @@ def get_coin_balance(request, student_id):
     })
 
 
-def get_coin_transactions(request, student_id):
-    """Student coin tarixini ko'rish."""
-    student = Student.objects.filter(id=student_id).first()
-    if not student:
-        return JsonResponse({"error": "Student topilmadi"}, status=404)
-
-    txns = CoinTransaction.objects.filter(student_id=student_id).select_related(
-        "given_by_teacher", "given_by_manager"
-    )
-    data = [
-        {
-            "id": t.id,
-            "amount": t.amount,
-            "reason": t.reason,
-            "reason_display": t.get_reason_display(),
-            "description": t.description,
-            "given_by": (
-                t.given_by_manager.name if t.given_by_manager
-                else (t.given_by_teacher.name if t.given_by_teacher else "Tizim")
-            ),
-            "given_by_role": (
-                "manager" if t.given_by_manager
-                else ("teacher" if t.given_by_teacher else "system")
-            ),
-            "created_at": t.created_at.strftime("%Y-%m-%d %H:%M"),
-        }
-        for t in txns
-    ]
-    return JsonResponse({
-        "student_id": student.id,
-        "student_name": f"{student.name} {student.surname}",
-        "coin_balance": student.coin_balance,
-        "transactions": data,
-    })
-
-
 def get_all_coin_balances(request):
     """
     Barcha studentlarning coin balansini ko'rish.
@@ -279,11 +237,15 @@ def add_coin(request):
     Studentga coin berish yoki olish.
     Teacher yoki Manager tomonidan chaqiriladi.
 
+    Eslatma: CoinTransaction.given_by faqat Teacher'ga bog'langan (model
+    shunday yaratilgan), shu sabab Manager bergan coin uchun "given_by"
+    bo'sh qoldiriladi, lekin menejer ismi "note" ichida yoziladi.
+
     Body:
     {
         "student_id": 5,
         "amount": 10,          # manfiy bo'lishi ham mumkin (jarima)
-        "reason": "reward",
+        "reason": "manual",
         "description": "...",
         "teacher_id": 2,       # teacher chaqirsa
         "manager_id": 1        # manager chaqirsa
@@ -311,33 +273,30 @@ def add_coin(request):
             }, status=400)
 
         given_by_teacher = None
-        given_by_manager = None
+        note = data.get("description", "")
 
         if data.get("manager_id"):
-            given_by_manager = Manager.objects.filter(
+            manager = Manager.objects.filter(
                 id=data["manager_id"], is_active=True
             ).first()
+            if manager:
+                note = f"[Menejer: {manager.name} {manager.surname}] {note}".strip()
 
         elif data.get("teacher_id"):
             given_by_teacher = Teacher.objects.filter(id=data["teacher_id"]).first()
 
-        txn = CoinTransaction.objects.create(
-            student=student,
-            amount=amount,
-            reason=data.get("reason", "manual"),
-            description=data.get("description", ""),
-            given_by_teacher=given_by_teacher,
-            given_by_manager=given_by_manager,
+        new_balance = apply_coin_transaction(
+            student,
+            amount,
+            data.get("reason", "manual"),
+            given_by=given_by_teacher,
+            note=note,
         )
-
-        # Balansni qayta o'qiymiz (save() ichida yangilangan)
-        student.refresh_from_db()
 
         return JsonResponse({
             "message": "Coin qo'shildi!" if amount >= 0 else "Coin ayirildi!",
-            "transaction_id": txn.id,
             "amount": amount,
-            "new_balance": student.coin_balance,
+            "new_balance": new_balance,
         }, status=201)
 
     except Exception as e:
@@ -385,28 +344,26 @@ def set_coin_balance(request, student_id):
         if not student:
             return JsonResponse({"error": "Student topilmadi"}, status=404)
 
-        given_by_manager = None
-        if manager_id:
-            given_by_manager = Manager.objects.filter(
-                id=manager_id, is_active=True
-            ).first()
-
         diff = int(new_balance) - student.coin_balance
         if diff == 0:
             return JsonResponse({"message": "Balans o'zgarmadi", "coin_balance": student.coin_balance})
 
-        CoinTransaction.objects.create(
-            student=student,
-            amount=diff,
-            reason="manual",
-            description=f"Balans to'g'ridan-to'g'ri {new_balance} ga o'rnatildi",
-            given_by_manager=given_by_manager,
+        note = f"Balans to'g'ridan-to'g'ri {new_balance} ga o'rnatildi"
+        if manager_id:
+            manager = Manager.objects.filter(id=manager_id, is_active=True).first()
+            if manager:
+                note = f"[Menejer: {manager.name} {manager.surname}] {note}"
+
+        updated_balance = apply_coin_transaction(
+            student,
+            diff,
+            "manual",
+            note=note,
         )
 
-        student.refresh_from_db()
         return JsonResponse({
             "message": "Balans yangilandi!",
-            "coin_balance": student.coin_balance,
+            "coin_balance": updated_balance,
         })
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -557,11 +514,7 @@ def get_students(request):
             "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
             "stage": s.stage,
             "schedule": s.schedule,
-<<<<<<< HEAD
             "coin_balance": s.coin_balance,
-=======
-            "coins": s.coins,
->>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
         }
         for s in qs
     ]
@@ -691,11 +644,7 @@ def login_student(request):
             "is_excellence": student.is_excellence,
             "stage": student.stage,
             "schedule": student.schedule,
-<<<<<<< HEAD
             "coin_balance": student.coin_balance,
-=======
-            "coins": student.coins,
->>>>>>> 1e950e7008cec6d3adea7146ad4b7f5bb4019d9d
         })
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -831,7 +780,7 @@ def update_attendance(request, attendance_id):
             attendance.status = new_status
             attendance.save()
 
-        return JsonResponse({"message": "Yangilandi!", "coins": attendance.student.coins})
+        return JsonResponse({"message": "Yangilandi!", "coin_balance": attendance.student.coin_balance})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -1225,7 +1174,10 @@ def delete_group(request, group_id):
     return JsonResponse({
         "message": "Group o'chirildi!"
     })
-# COINS
+
+
+# ─────────────────────────────────────────
+# COINS (qo'shimcha - student/teacher uchun)
 # ─────────────────────────────────────────
 
 def get_student_coins(request, student_id):
@@ -1233,11 +1185,11 @@ def get_student_coins(request, student_id):
     student = Student.objects.filter(id=student_id).first()
     if not student:
         return JsonResponse({"error": "Student topilmadi"}, status=404)
-    return JsonResponse({"student_id": student.id, "coins": student.coins})
+    return JsonResponse({"student_id": student.id, "coin_balance": student.coin_balance})
 
 
 def get_coin_transactions(request, student_id):
-    """Student/teacher uchun coin tarixi (ixtiyoriy, lekin foydali bo'ladi)."""
+    """Student/teacher uchun coin tarixi."""
     qs = CoinTransaction.objects.filter(student_id=student_id).select_related(
         "given_by"
     ).order_by("-created_at")
@@ -1301,7 +1253,7 @@ def give_manual_coins(request):
         return JsonResponse({
             "message": "Coin berildi!",
             "student_id": student.id,
-            "coins": new_balance,
+            "coin_balance": new_balance,
         }, status=201)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1319,7 +1271,7 @@ def get_leaderboard(request):
     if teacher_id:
         qs = qs.filter(teacher_id=teacher_id)
 
-    qs = qs.order_by("-coins", "name")[:100]
+    qs = qs.order_by("-coin_balance", "name")[:100]
 
     data = [
         {
@@ -1328,7 +1280,7 @@ def get_leaderboard(request):
             "name": s.name,
             "surname": s.surname,
             "teacher_name": s.teacher.name if s.teacher else "",
-            "coins": s.coins,
+            "coin_balance": s.coin_balance,
         }
         for i, s in enumerate(qs)
     ]
@@ -1456,7 +1408,7 @@ def create_order(request):
         if product.stock is not None and product.stock <= 0:
             return JsonResponse({"error": "Mahsulot tugagan"}, status=400)
 
-        if student.coins < product.price_coins:
+        if student.coin_balance < product.price_coins:
             return JsonResponse({"error": "Coin yetarli emas"}, status=400)
 
         with transaction.atomic():
@@ -1482,7 +1434,7 @@ def create_order(request):
         return JsonResponse({
             "id": order.id,
             "message": "Buyurtma yaratildi!",
-            "coins": student.coins,
+            "coin_balance": student.coin_balance,
         }, status=201)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1565,5 +1517,3 @@ def resolve_order(request, order_id):
         return JsonResponse({"message": "Yangilandi!", "status": order.status})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
-
-        
