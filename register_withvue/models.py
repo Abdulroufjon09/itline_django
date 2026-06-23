@@ -171,7 +171,7 @@ class StudentPenalty(models.Model):
 
 
 # ─────────────────────────────────────────
-# PAYMENT
+#   NT
 # ─────────────────────────────────────────
 
 
@@ -196,6 +196,7 @@ class Payment(models.Model):
 # ─────────────────────────────────────────
 # GROUP
 # ─────────────────────────────────────────
+# huhuhuhuhuqwbdqwdv8y
 
 
 class Group(models.Model):

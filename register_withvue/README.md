@@ -3,12 +3,14 @@
 ## Qo'shilgan narsalar
 
 ### 1. `Manager` modeli — eng yuqori daraja
+
 - Admin va Teacher dan **baland** turadi
 - Tizimga to'liq kirish huquqi
 - Alohida login endpoint orqali kiradi
 - `is_active` maydoni bilan deaktivatsiya qilish mumkin
 
 ### 2. `Coin` tizimi
+
 - Har bir studentda `coin_balance` maydoni (tezkor ko'rish)
 - `CoinTransaction` modeli — har bir operatsiyaning to'liq tarixi
 - Teacher yoki Manager coin bera/ola oladi
@@ -53,15 +55,17 @@ POST /api/managers/register/
 ## API Endpointlar
 
 ### Manager
-| Method | URL | Tavsif |
-|--------|-----|--------|
-| GET | `/api/managers/` | Barcha menejerlar |
-| POST | `/api/managers/register/` | Yangi menejer yaratish |
-| POST | `/api/managers/login/` | Menejer login |
-| PATCH | `/api/managers/update/<id>/` | Ma'lumot yangilash |
-| DELETE | `/api/managers/delete/<id>/` | Deaktivatsiya |
+
+| Method | URL                          | Tavsif                 |
+| ------ | ---------------------------- | ---------------------- |
+| GET    | `/api/managers/`             | Barcha menejerlar      |
+| POST   | `/api/managers/register/`    | Yangi menejer yaratish |
+| POST   | `/api/managers/login/`       | Menejer login          |
+| PATCH  | `/api/managers/update/<id>/` | Ma'lumot yangilash     |
+| DELETE | `/api/managers/delete/<id>/` | Deaktivatsiya          |
 
 **Login so'rovi:**
+
 ```json
 POST /api/managers/login/
 {
@@ -69,7 +73,9 @@ POST /api/managers/login/
   "password": "kuchliParol123"
 }
 ```
+
 **Javob:**
+
 ```json
 {
   "id": 1,
@@ -84,16 +90,18 @@ POST /api/managers/login/
 ---
 
 ### Coin
-| Method | URL | Tavsif |
-|--------|-----|--------|
-| GET | `/api/coins/` | Hammaning balansi (`?teacher_id=X`) |
-| GET | `/api/coins/balance/<student_id>/` | Bitta student balansi |
-| GET | `/api/coins/transactions/<student_id>/` | Student coin tarixi |
-| POST | `/api/coins/add/` | Coin berish yoki olish |
-| PATCH | `/api/coins/set/<student_id>/` | Balansni to'g'ridan belgilash (faqat manager) |
-| DELETE | `/api/coins/delete/<txn_id>/` | Tranzaksiyani bekor qilish |
+
+| Method | URL                                     | Tavsif                                        |
+| ------ | --------------------------------------- | --------------------------------------------- |
+| GET    | `/api/coins/`                           | Hammaning balansi (`?teacher_id=X`)           |
+| GET    | `/api/coins/balance/<student_id>/`      | Bitta student balansi                         |
+| GET    | `/api/coins/transactions/<student_id>/` | Student coin tarixi                           |
+| POST   | `/api/coins/add/`                       | Coin berish yoki olish                        |
+| PATCH  | `/api/coins/set/<student_id>/`          | Balansni to'g'ridan belgilash (faqat manager) |
+| DELETE | `/api/coins/delete/<txn_id>/`           | Tranzaksiyani bekor qilish                    |
 
 **Coin berish (Teacher tomonidan):**
+
 ```json
 POST /api/coins/add/
 {
@@ -106,6 +114,7 @@ POST /api/coins/add/
 ```
 
 **Coin berish (Manager tomonidan):**
+
 ```json
 POST /api/coins/add/
 {
@@ -118,6 +127,7 @@ POST /api/coins/add/
 ```
 
 **Coin olish (jarima):**
+
 ```json
 POST /api/coins/add/
 {
@@ -130,6 +140,7 @@ POST /api/coins/add/
 ```
 
 **Balansni to'g'ridan belgilash (faqat manager):**
+
 ```json
 PATCH /api/coins/set/5/
 {
@@ -139,6 +150,7 @@ PATCH /api/coins/set/5/
 ```
 
 **Coin tarixi javobi:**
+
 ```json
 {
   "student_id": 5,
@@ -162,12 +174,14 @@ PATCH /api/coins/set/5/
 ---
 
 ## `reason` turlari (Coin)
-| Kod | Ma'no |
-|-----|-------|
-| `reward` | Mukofot |
+
+| Kod          | Ma'no         |
+| ------------ | ------------- |
+| `reward`     | Mukofot       |
 | `attendance` | Davomat uchun |
-| `homework` | Uy ishi uchun |
-| `behavior` | Xulq-atvor |
+| `homework`   | Uy ishi uchun |
+| `behavior`   | Xulq-atvor    |
+
 | `penalty` | Jarima |
 | `manual` | Qo'lda kiritilgan |
 | `other` | Boshqa |
@@ -175,6 +189,7 @@ PATCH /api/coins/set/5/
 ---
 
 ## Huquqlar darajasi (yuqoridan pastga)
+
 ```
 Manager  ← hamma narsaga ruxsat, coin balansni to'g'ridan o'zgartirish
 Admin    ← mavjud funksional (is_admin=True student)
@@ -185,7 +200,9 @@ Student  ← o'z ma'lumotlarini ko'rish
 ---
 
 ## `get_students` javobida yangilik
+
 Endi `coin_balance` maydoni ham qaytadi:
+
 ```json
 {
   "id": 5,
@@ -197,3 +214,20 @@ Endi `coin_balance` maydoni ham qaytadi:
 ```
 
 `login_student` va `register_student` ham `coin_balance` qaytaradi.
+
+sqsbnwqjksbxkjqwbdxkbqwuidbkxuiqwkdbciqwejkdb
+
+{
+"id": 5,
+"name": "Ali",
+"surname": "Valiyev",
+...
+"coin_balance": 85
+}
+
+```
+
+`login_student` va `register_student` ham `coin_balance` qaytaradi.
+
+sqsbnwqjksbxkjqwbdxkbqwuidbkxuiqwkdbciqwejkdb
+```
