@@ -1080,6 +1080,8 @@ def create_group(request):
         group = Group.objects.create(
             name=data.get("name"),
             teacher=teacher,
+            lesson_time=data.get("lesson_time") or "09:00",
+            schedule=data.get("schedule", "odd"),
         )
 
         student_ids = data.get("students", [])
@@ -1129,6 +1131,12 @@ def update_group(request, group_id):
             group.teacher = Teacher.objects.filter(
                 id=data["teacher_id"]
             ).first()
+
+        if "lesson_time" in data:
+            group.lesson_time = data["lesson_time"]
+
+        if "schedule" in data:
+            group.schedule = data["schedule"]
 
         group.save()
 
