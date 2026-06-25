@@ -5,7 +5,7 @@ from .models import Student, Group
 class StudentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Student
-        fields = ["name", "surname", "phone", "teacher"]
+        fields = ["id","name", "surname", "phone", "teacher"]
 
 
 class GroupSerializer(serializers.ModelSerializer):
