@@ -744,9 +744,22 @@ def create_lesson(request):
             date=lesson_date,
         )
 
-        students_qs = teacher.students.filter(is_admin=False, is_excellence=False)
-        if schedule_for_day:
-            students_qs = students_qs.filter(schedule=schedule_for_day)
+        group_id = data.get("group_id")
+
+        if group_id:
+            # Guruh tanlangan bo'lsa — faqat shu guruh studentlari
+            group = Group.objects.filter(id=group_id).first()
+            if group:
+                students_qs = group.students.filter(is_admin=False, is_excellence=False)
+            else:
+                students_qs = teacher.students.filter(
+                    is_admin=False, is_excellence=False
+                )
+        else:
+            # Guruh tanlanmagan bo'lsa — teacher studentlari + schedule filter
+            students_qs = teacher.students.filter(is_admin=False, is_excellence=False)
+            if schedule_for_day:
+                students_qs = students_qs.filter(schedule=schedule_for_day)
 
         for student in students_qs:
             Attendance.objects.get_or_create(
