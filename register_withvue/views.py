@@ -1341,6 +1341,23 @@ def give_manual_coins(request):
         if amount is None:
             return JsonResponse({"error": "amount kiritilmadi"}, status=400)
 
+        # ── Oylik manual bonus cheklovi ──────────────────────────
+        if reason == "manual":
+            now = datetime.now()
+            already_used = CoinTransaction.objects.filter(
+                student=student,
+                reason="manual",
+                given_by=teacher,
+                created_at__year=now.year,
+                created_at__month=now.month,
+            ).exists()
+            if already_used:
+                return JsonResponse(
+                    {"error": "Bu o'quvchiga bu oy allaqachon bonus berilgan"},
+                    status=400,
+                )
+        # ────────────────────────────────────────────────────────
+
         new_balance = apply_coin_transaction(
             student,
             amount,
