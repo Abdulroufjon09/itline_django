@@ -232,6 +232,7 @@ class CoinTransaction(models.Model):
     REASON_CHOICES = [
         ("exam_pass", "Imtihondan o'tdi"),
         ("homework_done", "Vazifa qilingan"),
+        ("homework_partial", "Vazifa chala qilingan"),  # ✅ YANGI
         ("homework_missed", "Vazifa qilinmagan"),
         ("present", "Darsga keldi"),
         ("late", "Kech keldi"),
@@ -270,6 +271,7 @@ class CoinTransaction(models.Model):
 
     def str(self):  # ✅ Tuzatildi
         return f"{self.student} — {self.get_reason_display()} — {self.amount}"
+
     def save(self, *args, **kwargs):
         """Faqat YANGI tranzaksiya saqlanganda coin_balance yangilanadi."""
         is_new = self.pk is None

@@ -44,6 +44,7 @@ ATTENDANCE_REASON = {
 
 EXAM_PASS_COINS = 80
 HOMEWORK_DONE_COINS = 20
+HOMEWORK_PARTIAL_COINS = 10
 HOMEWORK_MISSED_COINS = -20
 
 
@@ -1272,13 +1273,6 @@ def get_coin_transactions(request, student_id):
 
 @csrf_exempt
 def give_manual_coins(request):
-    """
-    Teacher o'z studentiga hohlagan miqdorda coin beradi.
-    Sabab: imtihon (+80 default), vazifa (+/-20 default) yoki erkin 'manual' miqdor.
-    Body: { student_id, teacher_id, reason, amount (optional), note (optional) }
-    Agar reason='exam_pass' yoki 'homework_done'/'homework_missed' bo'lsa va amount
-    berilmasa, default qiymatlar ishlatiladi. Aks holda amount majburiy.
-    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -1297,6 +1291,7 @@ def give_manual_coins(request):
         defaults = {
             "exam_pass": EXAM_PASS_COINS,
             "homework_done": HOMEWORK_DONE_COINS,
+            "homework_partial": HOMEWORK_PARTIAL_COINS,
             "homework_missed": HOMEWORK_MISSED_COINS,
         }
         if amount is None:
