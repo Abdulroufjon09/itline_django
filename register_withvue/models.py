@@ -232,7 +232,7 @@ class CoinTransaction(models.Model):
     REASON_CHOICES = [
         ("exam_pass", "Imtihondan o'tdi"),
         ("homework_done", "Vazifa qilingan"),
-        ("homework_partial", "Vazifa chala qilingan"),  # ✅ YANGI
+        ("homework_partial", "Vazifa chala qilingan"),
         ("homework_missed", "Vazifa qilinmagan"),
         ("present", "Darsga keldi"),
         ("late", "Kech keldi"),
@@ -287,6 +287,37 @@ class CoinTransaction(models.Model):
             coin_balance=models.F("coin_balance") - self.amount
         )
         super().delete(*args, **kwargs)
+
+
+# ─────────────────────────────────────────
+# ATTENDANCE COIN SETTINGS
+# ─────────────────────────────────────────
+
+
+class AttendanceCoinSettings(models.Model):
+    """
+    Davomat uchun coin miqdorlari — global, 1 qatorli sozlama.
+    Admin panel orqali o'zgartiriladi, update_attendance shu yerdan o'qiydi.
+    """
+
+    present = models.IntegerField(default=5, verbose_name="Keldi")
+    late = models.IntegerField(default=2, verbose_name="Kech keldi")
+    absent = models.IntegerField(default=-10, verbose_name="Kelmadi")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Davomat coin sozlamasi"
+        verbose_name_plural = "Davomat coin sozlamalari"
+
+    def str(self):  # ✅ Tuzatildi
+        return f"Keldi:{self.present} Kech:{self.late} Kelmadi:{self.absent}"
+
+    @classmethod
+    def get_settings(cls):
+        obj, _ = cls.objects.get_or_create(
+            pk=1, defaults={"present": 5, "late": 2, "absent": -10}
+        )
+        return obj
 
 
 # ─────────────────────────────────────────

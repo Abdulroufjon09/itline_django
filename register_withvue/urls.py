@@ -13,7 +13,7 @@ urlpatterns = [
     path("stage-prices/update/<int:stage>/", views.update_stage_price),
     # Students
     path("students/", views.get_students),
-    path("students/update/<int:student_id>/", views.update_student),  # ✅ yangi
+    path("students/update/<int:student_id>/", views.update_student),
     path("register/", views.register_student),
     path("login/", views.login_student),
     # Lessons
@@ -23,7 +23,13 @@ urlpatterns = [
     path("attendance/<int:lesson_id>/", views.get_attendance),
     path("attendance/update/<int:attendance_id>/", views.update_attendance),
     path("student-attendance/<int:student_id>/", views.get_student_attendance),
-    path("monthly-absences/", views.get_monthly_absences),  # ✅ yangi
+    path("monthly-absences/", views.get_monthly_absences),
+    # ── Attendance coin settings ── ✅ yangi
+    path("attendance-coin-settings/", views.get_attendance_coin_settings),
+    path(
+        "attendance-coin-settings/update/",
+        views.update_attendance_coin_settings,
+    ),
     # Payments
     path("payments/<int:student_id>/", views.get_payments),
     path("payments/", views.get_all_payments),
@@ -39,28 +45,28 @@ urlpatterns = [
     path(
         "teachers/<int:teacher_id>/penalty-limit/", views.update_teacher_penalty_limit
     ),
-    # ── Coins ── ✅ yangi
+    # ── Coins ──
     path("coins/student/<int:student_id>/", views.get_student_coins),
     path("coins/transactions/<int:student_id>/", views.get_coin_transactions),
     path("coins/give/", views.give_manual_coins),
     path("leaderboard/", views.get_leaderboard),
-    # ── Magazine (Products) ── ✅ yangi
+    # ── Magazine (Products) ──
     path("products/", views.get_products),
     path("products/all/", views.get_all_products),
     path("products/create/", views.create_product),
     path("products/update/<int:product_id>/", views.update_product),
     path("products/delete/<int:product_id>/", views.delete_product),
-    # ── Orders ── ✅ yangi
+    # ── Orders ──
     path("orders/create/", views.create_order),
     path("orders/student/<int:student_id>/", views.get_student_orders),
     path("orders/", views.get_all_orders),
     path("orders/resolve/<int:order_id>/", views.resolve_order),
-    # ── Groups ── ✅ yangi
+    # ── Groups ──
     path("groups/", views.get_groups),
-    path("groups/create/", views.create_group),  # avval
+    path("groups/create/", views.create_group),
     path("groups/update/<int:group_id>/", views.update_group),
     path("groups/delete/<int:group_id>/", views.delete_group),
-    path("groups/<int:group_id>/", views.get_group),  # keyin
+    path("groups/<int:group_id>/", views.get_group),
 ]
 
 app_name = "register_withvue"

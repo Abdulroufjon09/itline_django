@@ -22,6 +22,7 @@ from .models import (
     CoinTransaction,
     Product,
     Order,
+    AttendanceCoinSettings,  # ✅ YANGI
 )
 
 ADMIN_PASSWORD = "excel2024"
@@ -30,12 +31,6 @@ EXCELLENCE_PASSWORD = "excellence2024"
 ODD_DAYS = {0, 2, 4}
 EVEN_DAYS = {1, 3, 5}
 
-# Attendance status o'zgarganda avtomatik beriladigan coinlar
-ATTENDANCE_COINS = {
-    "present": 10,
-    "late": 5,
-    "absent": -10,
-}
 ATTENDANCE_REASON = {
     "present": "present",
     "late": "late",
@@ -59,6 +54,16 @@ def get_schedule_for_day(weekday):
     elif weekday in EVEN_DAYS:
         return "even"
     return None
+
+
+def get_attendance_coins_map():
+    """
+    Davomat coin miqdorlarini bazadan (AttendanceCoinSettings'dan) olib keladi.
+    Manager panel orqali o'zgartirilsa, bu funksiya har safar eng so'nggi
+    qiymatlarni qaytaradi — frontendni qayta deploy qilish shart emas.
+    """
+    s = AttendanceCoinSettings.get_settings()
+    return {"present": s.present, "late": s.late, "absent": s.absent}
 
 
 def apply_coin_transaction(
@@ -417,8 +422,6 @@ def get_teachers(request):
         )
         return JsonResponse(teachers, safe=False)
     except Exception as e:
-        # Return JSON error (prevents frontend JSON.parse errors when server
-        # returns HTML error pages). Keep field names unchanged for Vue.
         return JsonResponse({"error": str(e)}, status=500)
 
 
@@ -748,7 +751,6 @@ def create_lesson(request):
         group_id = data.get("group_id")
 
         if group_id:
-            # Guruh tanlangan bo'lsa — faqat shu guruh studentlari
             group = Group.objects.filter(id=group_id).first()
             if group:
                 students_qs = group.students.filter(is_admin=False, is_excellence=False)
@@ -757,7 +759,6 @@ def create_lesson(request):
                     is_admin=False, is_excellence=False
                 )
         else:
-            # Guruh tanlanmagan bo'lsa — teacher studentlari + schedule filter
             students_qs = teacher.students.filter(is_admin=False, is_excellence=False)
             if schedule_for_day:
                 students_qs = students_qs.filter(schedule=schedule_for_day)
@@ -806,8 +807,9 @@ def get_attendance(request, lesson_id):
 @csrf_exempt
 def update_attendance(request, attendance_id):
     """
-    Status yangilanganda avtomatik coin beriladi/ayiriladi:
-    present +10, late +5, absent -10.
+    Status yangilanganda avtomatik coin beriladi/ayiriladi.
+    Coin miqdorlari AttendanceCoinSettings'dan (manager panel orqali
+    o'zgartiriladigan) dinamik olinadi — hardcoded emas.
     Agar status avval ham xuddi shu bo'lsa, qayta coin berilmaydi (idempotent).
     Status o'zgarsa, eski statusning coini bekor qilinib, yangisi qo'llanadi.
     """
@@ -829,25 +831,27 @@ def update_attendance(request, attendance_id):
         if new_status not in dict(Attendance.STATUS_CHOICES):
             return JsonResponse({"error": "Noto'g'ri status"}, status=400)
 
+        attendance_coins = get_attendance_coins_map()  # ✅ dinamik, bazadan
+
         with transaction.atomic():
             if new_status != old_status:
                 student = attendance.student
 
                 # Eski statusga berilgan coinni bekor qilamiz (agar bor bo'lsa)
-                if old_status in ATTENDANCE_COINS:
+                if old_status in attendance_coins:
                     apply_coin_transaction(
                         student,
-                        -ATTENDANCE_COINS[old_status],
+                        -attendance_coins[old_status],
                         ATTENDANCE_REASON.get(old_status, "manual"),
                         note=f"Status '{old_status}' bekor qilindi",
                         attendance=attendance,
                     )
 
                 # Yangi statusga coin beramiz
-                if new_status in ATTENDANCE_COINS:
+                if new_status in attendance_coins:
                     apply_coin_transaction(
                         student,
-                        ATTENDANCE_COINS[new_status],
+                        attendance_coins[new_status],
                         ATTENDANCE_REASON.get(new_status, "manual"),
                         note=f"Status: {new_status}",
                         attendance=attendance,
@@ -906,6 +910,44 @@ def get_monthly_absences(request):
         result[student.id] = count
 
     return JsonResponse(result)
+
+
+# ─────────────────────────────────────────
+# ATTENDANCE COIN SETTINGS  ✅ YANGI
+# ─────────────────────────────────────────
+
+
+def get_attendance_coin_settings(request):
+    """Davomat coin sozlamalarini olish (har kim — teacher ham, manager ham ko'rishi mumkin)."""
+    s = AttendanceCoinSettings.get_settings()
+    return JsonResponse({"present": s.present, "late": s.late, "absent": s.absent})
+
+
+@csrf_exempt
+def update_attendance_coin_settings(request):
+    """Faqat Manager: davomat coin sozlamalarini yangilash."""
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        s = AttendanceCoinSettings.get_settings()
+        if "present" in data:
+            s.present = int(data["present"])
+        if "late" in data:
+            s.late = int(data["late"])
+        if "absent" in data:
+            s.absent = int(data["absent"])
+        s.save()
+        return JsonResponse(
+            {
+                "message": "Sozlamalar yangilandi!",
+                "present": s.present,
+                "late": s.late,
+                "absent": s.absent,
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
 
 
 # ─────────────────────────────────────────
