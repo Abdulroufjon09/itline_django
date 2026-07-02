@@ -431,12 +431,24 @@ def create_teacher(request):
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
         data = json.loads(request.body)
+        phone = data.get("phone", "").strip()
+
+        # ✅ Telefon unique tekshiring
+        if Teacher.objects.filter(phone=phone).exists():
+            return JsonResponse(
+                {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
+            )
+
+        # ✅ Barcha teacher-lar uchun bir xil parol: ADMIN_PASSWORD
         teacher = Teacher.objects.create(
             name=data.get("name"),
-            phone=data.get("phone", ""),
+            phone=phone,
+            password=make_password(ADMIN_PASSWORD),  # ✅ "excel2024"
             is_senior=data.get("is_senior", False),
         )
-        return JsonResponse({"id": teacher.id, "name": teacher.name}, status=201)
+        return JsonResponse(
+            {"id": teacher.id, "name": teacher.name, "phone": teacher.phone}, status=201
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -670,37 +682,48 @@ def login_student(request):
         phone = data.get("phone")
         password = data.get("password")
 
+        # 1️⃣ Student-dan qidirish
         student = Student.objects.select_related("teacher").filter(phone=phone).first()
 
         if password is None:
             return JsonResponse({"exists": bool(student)})
 
-        if not student:
+        if student and check_password(password, student.password):
             return JsonResponse(
-                {"exists": False, "error": "Foydalanuvchi topilmadi"}, status=404
+                {
+                    "exists": True,
+                    "id": student.id,
+                    "name": student.name,
+                    "surname": student.surname,
+                    "phone": student.phone,
+                    "teacher_id": student.teacher_id,
+                    "teacher_name": student.teacher.name if student.teacher else "",
+                    "is_admin": student.is_admin,
+                    "is_excellence": student.is_excellence,
+                    "stage": student.stage,
+                    "schedule": student.schedule,
+                    "coin_balance": student.coin_balance,
+                }
             )
 
-        if not check_password(password, student.password):
+        # 2️⃣ Teacher-dan qidirish ✅
+        teacher = Teacher.objects.filter(phone=phone).first()
+        if teacher and teacher.password and check_password(password, teacher.password):
             return JsonResponse(
-                {"exists": False, "error": "Parol noto'g'ri"}, status=401
+                {
+                    "exists": True,
+                    "id": teacher.id,
+                    "name": teacher.name,
+                    "surname": teacher.name,
+                    "phone": teacher.phone,
+                    "teacher_id": teacher.id,
+                    "is_admin": False,
+                    "is_excellence": teacher.is_senior,
+                }
             )
 
-        return JsonResponse(
-            {
-                "exists": True,
-                "id": student.id,
-                "name": student.name,
-                "surname": student.surname,
-                "phone": student.phone,
-                "teacher_id": student.teacher_id,
-                "teacher_name": student.teacher.name if student.teacher else "",
-                "is_admin": student.is_admin,
-                "is_excellence": student.is_excellence,
-                "stage": student.stage,
-                "schedule": student.schedule,
-                "coin_balance": student.coin_balance,
-            }
-        )
+        return JsonResponse({"exists": False, "error": "Parol noto'g'ri"}, status=401)
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 

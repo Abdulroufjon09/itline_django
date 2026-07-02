@@ -18,7 +18,7 @@ class Manager(models.Model):
         verbose_name = "Menejer"
         verbose_name_plural = "Menejerlar"
 
-    def str(self):  # ✅ Tuzatildi: str → str
+    def __str__(self):
         return f"{self.name} {self.surname}".strip()
 
 
@@ -29,12 +29,13 @@ class Manager(models.Model):
 
 class Teacher(models.Model):
     name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=20, blank=True)
+    phone = models.CharField(max_length=20, blank=True, unique=True)  # ✅ UNIQUE
+    password = models.CharField(max_length=255, blank=True)  # ✅ YANGI - password field
     is_senior = models.BooleanField(default=False)
     penalty_limit = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return self.name
 
 
@@ -75,7 +76,7 @@ class Student(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.name} {self.surname}"
 
 
@@ -88,7 +89,7 @@ class StagePrice(models.Model):
     stage = models.IntegerField(unique=True)
     price = models.IntegerField(default=0)
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.stage}-etap: {self.price}"
 
 
@@ -104,7 +105,7 @@ class Lesson(models.Model):
     )
     date = models.DateField()
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return self.title
 
 
@@ -131,7 +132,7 @@ class Attendance(models.Model):
     class Meta:
         unique_together = ("student", "lesson")
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.student} — {self.lesson} — {self.status}"
 
 
@@ -164,7 +165,7 @@ class StudentPenalty(models.Model):
     date = models.DateField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.student} — {self.get_reason_display()} — {self.amount}"
 
 
@@ -187,7 +188,7 @@ class Payment(models.Model):
     class Meta:
         unique_together = ("student", "month")
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.student} — {self.month} — {self.amount_due}"
 
 
@@ -208,13 +209,13 @@ class Group(models.Model):
     )
     students = models.ManyToManyField(Student, related_name="groups")
     lesson_time = models.TimeField(null=False, blank=False)
-    schedule = models.CharField(  # ✅ Qo'shildi: Group darajasida jadval
+    schedule = models.CharField(
         max_length=10,
         choices=SCHEDULE_CHOICES,
         default="odd",
     )
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return self.name
 
 
@@ -224,11 +225,6 @@ class Group(models.Model):
 
 
 class CoinTransaction(models.Model):
-    """
-    Har bir coin o'zgarishi shu yerda log qilinadi.
-    Student.coin_balance maydoni har doim shu tranzaksiyalar yig'indisiga teng.
-    """
-
     REASON_CHOICES = [
         ("exam_pass", "Imtihondan o'tdi"),
         ("homework_done", "Vazifa qilingan"),
@@ -269,11 +265,10 @@ class CoinTransaction(models.Model):
         verbose_name = "Coin tranzaksiyasi"
         verbose_name_plural = "Coin tranzaksiyalari"
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.student} — {self.get_reason_display()} — {self.amount}"
 
     def save(self, *args, **kwargs):
-        """Faqat YANGI tranzaksiya saqlanganda coin_balance yangilanadi."""
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:
@@ -282,7 +277,6 @@ class CoinTransaction(models.Model):
             )
 
     def delete(self, *args, **kwargs):
-        """✅ Tuzatildi: O'chirishda coin_balance qaytariladi."""
         Student.objects.filter(pk=self.student_id).update(
             coin_balance=models.F("coin_balance") - self.amount
         )
@@ -295,11 +289,6 @@ class CoinTransaction(models.Model):
 
 
 class AttendanceCoinSettings(models.Model):
-    """
-    Davomat uchun coin miqdorlari — global, 1 qatorli sozlama.
-    Admin panel orqali o'zgartiriladi, update_attendance shu yerdan o'qiydi.
-    """
-
     present = models.IntegerField(default=5, verbose_name="Keldi")
     late = models.IntegerField(default=2, verbose_name="Kech keldi")
     absent = models.IntegerField(default=-10, verbose_name="Kelmadi")
@@ -309,7 +298,7 @@ class AttendanceCoinSettings(models.Model):
         verbose_name = "Davomat coin sozlamasi"
         verbose_name_plural = "Davomat coin sozlamalari"
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"Keldi:{self.present} Kech:{self.late} Kelmadi:{self.absent}"
 
     @classmethod
@@ -334,7 +323,7 @@ class Product(models.Model):
     stock = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.name} — {self.price_coins} coin"
 
 
@@ -357,5 +346,5 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
-    def str(self):  # ✅ Tuzatildi
+    def __str__(self):
         return f"{self.student} — {self.product_name} — {self.status}"
