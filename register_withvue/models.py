@@ -209,6 +209,7 @@ class Group(models.Model):
     )
     students = models.ManyToManyField(Student, related_name="groups")
     lesson_time = models.TimeField(null=False, blank=False)
+    room = models.CharField(max_length=50, blank=True, default="", verbose_name="Xona")
     schedule = models.CharField(
         max_length=10,
         choices=SCHEDULE_CHOICES,

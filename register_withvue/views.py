@@ -1230,6 +1230,7 @@ def create_group(request):
             name=data.get("name"),
             teacher=teacher,
             lesson_time=data.get("lesson_time") or "09:00",
+            room=data.get("room", ""),
             schedule=data.get("schedule", "odd"),
         )
 
@@ -1267,6 +1268,9 @@ def update_group(request, group_id):
 
         if "lesson_time" in data:
             group.lesson_time = data["lesson_time"]
+
+        if "room" in data:
+            group.room = data["room"]
 
         if "schedule" in data:
             group.schedule = data["schedule"]
