@@ -63,7 +63,17 @@ class Student(models.Model):
         related_name="students",
     )
 
+    # ✅ YANGI: Guruh - studentlar guruhdan kunlarni olib oladi
+    group = models.ForeignKey(
+        "Group",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="group_students",
+    )
+
     stage = models.IntegerField(default=1)
+    # ✅ schedule hozir aniqlangan bo'lmaydi - guruh schedule-dan olinadi
     schedule = models.CharField(
         max_length=10,
         choices=SCHEDULE_CHOICES,
@@ -78,6 +88,13 @@ class Student(models.Model):
 
     def __str__(self):
         return f"{self.name} {self.surname}"
+
+    @property
+    def effective_schedule(self):
+        """Agar group bo'lsa, guruh schedule-idan olib, aks xolda student schedule-dan olib."""
+        if self.group:
+            return self.group.schedule
+        return self.schedule
 
 
 # ─────────────────────────────────────────
@@ -210,6 +227,8 @@ class Group(models.Model):
     students = models.ManyToManyField(Student, related_name="groups")
     lesson_time = models.TimeField(null=False, blank=False)
     room = models.CharField(max_length=50, blank=True, default="", verbose_name="Xona")
+    
+    # ✅ YANGI: Schedule guruhda saqlanadi
     schedule = models.CharField(
         max_length=10,
         choices=SCHEDULE_CHOICES,

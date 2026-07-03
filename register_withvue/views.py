@@ -7,10 +7,10 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
 from django.db import models as db_models
-from .models import Group
-from .serializers import GroupSerializer
+from rest_framework import serializers
 
 from .models import (
+    Group,
     Student,
     Teacher,
     Lesson,
@@ -22,7 +22,7 @@ from .models import (
     CoinTransaction,
     Product,
     Order,
-    AttendanceCoinSettings,  # ✅ YANGI
+    AttendanceCoinSettings,
 )
 
 ADMIN_PASSWORD = "excel2024"
@@ -41,6 +41,41 @@ EXAM_PASS_COINS = 80
 HOMEWORK_DONE_COINS = 20
 HOMEWORK_PARTIAL_COINS = 10
 HOMEWORK_MISSED_COINS = -20
+
+
+# ─────────────────────────────
+# SERIALIZERS
+# ─────────────────────────────
+
+
+class StudentMinimalSerializer(serializers.ModelSerializer):
+    """Guruh students uchun minimal ma'lumot."""
+    class Meta:
+        model = Student
+        fields = ['id', 'name', 'surname', 'phone', 'stage', 'schedule']
+
+
+class GroupSerializer(serializers.ModelSerializer):
+    """Guruh serializer - students ma'lumoti ham shu yerda."""
+    teacher = serializers.SerializerMethodField()
+    students = StudentMinimalSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = Group
+        fields = ['id', 'name', 'teacher', 'students', 'lesson_time', 'room', 'schedule']
+    
+    def get_teacher(self, obj):
+        if obj.teacher:
+            return {
+                'id': obj.teacher.id,
+                'name': obj.teacher.name
+            }
+        return None
+
+
+# ─────────────────────────────
+# HELPERS
+# ─────────────────────────────
 
 
 def get_stage_price(stage):
@@ -210,9 +245,9 @@ def delete_manager(request, manager_id):
     return JsonResponse({"message": "Menejer deaktivatsiya qilindi!"})
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # COIN
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_coin_balance(request, student_id):
@@ -266,18 +301,14 @@ def add_coin(request):
     Studentga coin berish yoki olish.
     Teacher yoki Manager tomonidan chaqiriladi.
 
-    Eslatma: CoinTransaction.given_by faqat Teacher'ga bog'langan (model
-    shunday yaratilgan), shu sabab Manager bergan coin uchun "given_by"
-    bo'sh qoldiriladi, lekin menejer ismi "note" ichida yoziladi.
-
     Body:
     {
         "student_id": 5,
-        "amount": 10,          # manfiy bo'lishi ham mumkin (jarima)
+        "amount": 10,
         "reason": "manual",
         "description": "...",
-        "teacher_id": 2,       # teacher chaqirsa
-        "manager_id": 1        # manager chaqirsa
+        "teacher_id": 2,
+        "manager_id": 1
     }
     """
     if request.method != "POST":
@@ -295,7 +326,6 @@ def add_coin(request):
 
         amount = int(amount)
 
-        # Balans manfiy bo'lmasligi tekshiruvi (ixtiyoriy)
         if student.coin_balance + amount < 0:
             return JsonResponse(
                 {"error": f"Yetarli coin yo'q. Joriy balans: {student.coin_balance}"},
@@ -338,10 +368,7 @@ def add_coin(request):
 
 @csrf_exempt
 def delete_coin_transaction(request, txn_id):
-    """
-    Coin tranzaksiyasini bekor qilish (faqat Manager).
-    Balans qayta hisoblanadi.
-    """
+    """Coin tranzaksiyasini bekor qilish."""
     if request.method != "DELETE":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
@@ -349,7 +376,6 @@ def delete_coin_transaction(request, txn_id):
     if not txn:
         return JsonResponse({"error": "Tranzaksiya topilmadi"}, status=404)
 
-    # Balansni teskari qaytaramiz
     Student.objects.filter(pk=txn.student_id).update(
         coin_balance=db_models.F("coin_balance") - txn.amount
     )
@@ -361,10 +387,7 @@ def delete_coin_transaction(request, txn_id):
 
 @csrf_exempt
 def set_coin_balance(request, student_id):
-    """
-    Faqat Manager: student coin balansini to'g'ridan-to'g'ri belgilash.
-    Farqni CoinTransaction sifatida saqlaydi.
-    """
+    """Faqat Manager: student coin balansini to'g'ridan-to'g'ri belgilash."""
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -408,9 +431,9 @@ def set_coin_balance(request, student_id):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # TEACHERS
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_teachers(request):
@@ -433,17 +456,15 @@ def create_teacher(request):
         data = json.loads(request.body)
         phone = data.get("phone", "").strip()
 
-        # ✅ Telefon unique tekshiring
         if Teacher.objects.filter(phone=phone).exists():
             return JsonResponse(
                 {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
             )
 
-        # ✅ Barcha teacher-lar uchun bir xil parol: ADMIN_PASSWORD
         teacher = Teacher.objects.create(
             name=data.get("name"),
             phone=phone,
-            password=make_password(ADMIN_PASSWORD),  # ✅ "excel2024"
+            password=make_password(ADMIN_PASSWORD),
             is_senior=data.get("is_senior", False),
         )
         return JsonResponse(
@@ -514,9 +535,9 @@ def reassign_students(request):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # STAGE PRICES
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_stage_prices(request):
@@ -543,9 +564,9 @@ def update_stage_price(request, stage):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # STUDENTS
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_students(request):
@@ -682,7 +703,6 @@ def login_student(request):
         phone = data.get("phone")
         password = data.get("password")
 
-        # 1️⃣ Student-dan qidirish
         student = Student.objects.select_related("teacher").filter(phone=phone).first()
 
         if password is None:
@@ -706,7 +726,6 @@ def login_student(request):
                 }
             )
 
-        # 2️⃣ Teacher-dan qidirish ✅
         teacher = Teacher.objects.filter(phone=phone).first()
         if teacher and teacher.password and check_password(password, teacher.password):
             return JsonResponse(
@@ -728,9 +747,9 @@ def login_student(request):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # LESSONS
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_lessons(request):
@@ -805,9 +824,9 @@ def create_lesson(request):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # ATTENDANCE
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_attendance(request, lesson_id):
@@ -831,10 +850,7 @@ def get_attendance(request, lesson_id):
 def update_attendance(request, attendance_id):
     """
     Status yangilanganda avtomatik coin beriladi/ayiriladi.
-    Coin miqdorlari AttendanceCoinSettings'dan (manager panel orqali
-    o'zgartiriladigan) dinamik olinadi — hardcoded emas.
-    Agar status avval ham xuddi shu bo'lsa, qayta coin berilmaydi (idempotent).
-    Status o'zgarsa, eski statusning coini bekor qilinib, yangisi qo'llanadi.
+    Coin miqdorlari AttendanceCoinSettings'dan dinamik olinadi.
     """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -854,13 +870,12 @@ def update_attendance(request, attendance_id):
         if new_status not in dict(Attendance.STATUS_CHOICES):
             return JsonResponse({"error": "Noto'g'ri status"}, status=400)
 
-        attendance_coins = get_attendance_coins_map()  # ✅ dinamik, bazadan
+        attendance_coins = get_attendance_coins_map()
 
         with transaction.atomic():
             if new_status != old_status:
                 student = attendance.student
 
-                # Eski statusga berilgan coinni bekor qilamiz (agar bor bo'lsa)
                 if old_status in attendance_coins:
                     apply_coin_transaction(
                         student,
@@ -870,7 +885,6 @@ def update_attendance(request, attendance_id):
                         attendance=attendance,
                     )
 
-                # Yangi statusga coin beramiz
                 if new_status in attendance_coins:
                     apply_coin_transaction(
                         student,
@@ -935,13 +949,13 @@ def get_monthly_absences(request):
     return JsonResponse(result)
 
 
-# ─────────────────────────────────────────
-# ATTENDANCE COIN SETTINGS  ✅ YANGI
-# ─────────────────────────────────────────
+# ─────────────────────────────
+# ATTENDANCE COIN SETTINGS
+# ─────────────────────────────
 
 
 def get_attendance_coin_settings(request):
-    """Davomat coin sozlamalarini olish (har kim — teacher ham, manager ham ko'rishi mumkin)."""
+    """Davomat coin sozlamalarini olish."""
     s = AttendanceCoinSettings.get_settings()
     return JsonResponse({"present": s.present, "late": s.late, "absent": s.absent})
 
@@ -973,9 +987,9 @@ def update_attendance_coin_settings(request):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # STUDENT PENALTIES
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_student_penalties(request, student_id):
@@ -1057,9 +1071,9 @@ def delete_student_penalty(request, penalty_id):
     return JsonResponse({"message": "O'chirildi!"})
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # PAYMENTS
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_payments(request, student_id):
@@ -1189,32 +1203,33 @@ def update_payment_amount(request, payment_id):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────────────────
-# GROUPS
-# ─────────────────────────────────────────
+# ─────────────────────────────
+# GROUPS ✅ YANGILANGAN
+# ─────────────────────────────
 
 
 def get_groups(request):
+    """Barcha guruhlarni olish."""
     groups = Group.objects.select_related("teacher").prefetch_related("students")
-
     serializer = GroupSerializer(groups, many=True)
-
     return JsonResponse(serializer.data, safe=False)
 
 
 def get_group(request, group_id):
+    """Bitta guruh ma'lumotlarini olish."""
     group = Group.objects.filter(id=group_id).first()
-
     if not group:
         return JsonResponse({"error": "Group topilmadi"}, status=404)
-
     serializer = GroupSerializer(group)
-
     return JsonResponse(serializer.data, safe=False)
 
 
 @csrf_exempt
 def create_group(request):
+    """
+    Yangi guruh yaratish.
+    ✅ Schedule gurunga qo'yiladi, students avtomatik yangilanadi
+    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
@@ -1222,10 +1237,10 @@ def create_group(request):
         data = json.loads(request.body)
 
         teacher = None
-
         if data.get("teacher_id"):
             teacher = Teacher.objects.filter(id=data.get("teacher_id")).first()
 
+        # ✅ Schedule guruhda saqlanadi
         group = Group.objects.create(
             name=data.get("name"),
             teacher=teacher,
@@ -1235,12 +1250,15 @@ def create_group(request):
         )
 
         student_ids = data.get("students", [])
-
         if student_ids:
             group.students.set(student_ids)
+            # ✅ Studentlarning schedule-ini va group-ni sinkronlash
+            Student.objects.filter(id__in=student_ids).update(
+                group_id=group.id,
+                schedule=group.schedule,
+            )
 
         serializer = GroupSerializer(group)
-
         return JsonResponse(serializer.data, status=201)
 
     except Exception as e:
@@ -1249,16 +1267,21 @@ def create_group(request):
 
 @csrf_exempt
 def update_group(request, group_id):
+    """
+    Guruhni tahrirlash.
+    ✅ Schedule o'zgarsa, barcha studentlar avtomatik yangilanadi
+    """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
-
         group = Group.objects.filter(id=group_id).first()
 
         if not group:
             return JsonResponse({"error": "Group topilmadi"}, status=404)
+
+        old_schedule = group.schedule
 
         if "name" in data:
             group.name = data["name"]
@@ -1279,9 +1302,19 @@ def update_group(request, group_id):
 
         if "students" in data:
             group.students.set(data["students"])
+            # ✅ Studentlarning group_id-sini va schedule-ini yangilash
+            Student.objects.filter(id__in=data["students"]).update(
+                group_id=group.id,
+                schedule=group.schedule,
+            )
+
+        # ✅ Agar schedule o'zgargan bo'lsa, barcha guruh studentlarini yangilash
+        if "schedule" in data and old_schedule != group.schedule:
+            Student.objects.filter(group_id=group.id).update(
+                schedule=group.schedule
+            )
 
         serializer = GroupSerializer(group)
-
         return JsonResponse(serializer.data, safe=False)
 
     except Exception as e:
@@ -1290,26 +1323,36 @@ def update_group(request, group_id):
 
 @csrf_exempt
 def delete_group(request, group_id):
+    """
+    Guruhni o'chirish.
+    ✅ Studentlar o'chirilmadi, faqat guruhdan olib tashlanadi
+    """
     if request.method != "DELETE":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     group = Group.objects.filter(id=group_id).first()
-
     if not group:
         return JsonResponse({"error": "Group topilmadi"}, status=404)
 
+    # ✅ Guruhga tegishli barcha studentlarni guruhdan olib tashla
+    Student.objects.filter(group_id=group.id).update(
+        group_id=None
+    )
+
     group.delete()
 
-    return JsonResponse({"message": "Group o'chirildi!"})
+    return JsonResponse(
+        {"message": "Group o'chirildi! Studentlar guruhdan olib tashlanildi (o'chirilmadi)"}
+    )
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # COINS (qo'shimcha - student/teacher uchun)
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_student_coins(request, student_id):
-    """Student faqat o'z coinini ko'rishi uchun (frontend 'faqat coins ko'rinishi' talabi)."""
+    """Student o'z coinini ko'rish."""
     student = Student.objects.filter(id=student_id).first()
     if not student:
         return JsonResponse({"error": "Student topilmadi"}, status=404)
@@ -1368,7 +1411,7 @@ def give_manual_coins(request):
         if amount is None:
             return JsonResponse({"error": "amount kiritilmadi"}, status=400)
 
-        # ── Oylik manual bonus cheklovi ──────────────────────────
+        # Oylik manual bonus cheklovi
         if reason == "manual":
             now = datetime.now()
             already_used = CoinTransaction.objects.filter(
@@ -1383,7 +1426,6 @@ def give_manual_coins(request):
                     {"error": "Bu o'quvchiga bu oy allaqachon bonus berilgan"},
                     status=400,
                 )
-        # ────────────────────────────────────────────────────────
 
         new_balance = apply_coin_transaction(
             student,
@@ -1406,10 +1448,7 @@ def give_manual_coins(request):
 
 
 def get_leaderboard(request):
-    """
-    Eng ko'p coin to'plagan studentlar reytingi.
-    Ixtiyoriy: ?teacher_id= bilan faqat shu teacher studentlari orasida reyting.
-    """
+    """Eng ko'p coin to'plagan studentlar reytingi."""
     teacher_id = request.GET.get("teacher_id", "")
     qs = Student.objects.select_related("teacher").filter(
         is_admin=False, is_excellence=False
@@ -1433,9 +1472,9 @@ def get_leaderboard(request):
     return JsonResponse(data, safe=False)
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # MAGAZINE (DO'KON)
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 def get_products(request):
@@ -1530,18 +1569,16 @@ def delete_product(request, product_id):
     return JsonResponse({"message": "O'chirildi!"})
 
 
-# ─────────────────────────────────────────
+# ─────────────────────────────
 # ORDERS (Magazindan xarid)
-# ─────────────────────────────────────────
+# ─────────────────────────────
 
 
 @csrf_exempt
 def create_order(request):
     """
     Student coin sarflab mahsulot buyurtma qiladi.
-    Coin darhol ayiriladi (rezerv qilinadi), status='pending' bo'lib qoladi.
-    Admin/teacher keyin approve yoki reject qiladi (reject bo'lsa coin qaytariladi).
-    Body: { student_id, product_id }
+    Coin darhol ayiriladi, status='pending' bo'lib qoladi.
     """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -1613,7 +1650,7 @@ def get_student_orders(request, student_id):
 
 
 def get_all_orders(request):
-    """Admin uchun: barcha buyurtmalar (kerak bo'lsa status bo'yicha filter)."""
+    """Admin uchun: barcha buyurtmalar."""
     status = request.GET.get("status", "")
     qs = Order.objects.select_related("student").order_by("-created_at")
     if status:
@@ -1638,7 +1675,6 @@ def resolve_order(request, order_id):
     """
     Admin buyurtmani tasdiqlaydi (approved) yoki rad etadi (rejected).
     Rad etilsa, sarflangan coin studentga qaytariladi.
-    Body: { status: 'approved' | 'rejected' }
     """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
