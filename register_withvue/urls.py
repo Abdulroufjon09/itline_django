@@ -67,6 +67,12 @@ urlpatterns = [
     path("groups/update/<int:group_id>/", views.update_group),
     path("groups/delete/<int:group_id>/", views.delete_group),
     path("groups/<int:group_id>/", views.get_group),
+    # Courses
+    path("courses/", views.get_courses),
+    path("courses/<int:course_id>/", views.get_course),
+    path("courses/create/", views.create_course),
+    path("courses/update/<int:course_id>/", views.update_course),
+    path("courses/delete/<int:course_id>/", views.delete_course),
 ]
 
 app_name = "register_withvue"

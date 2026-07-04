@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 # ─────────────────────────────────────────
 # MANAGER
@@ -19,7 +20,7 @@ class Manager(models.Model):
         verbose_name_plural = "Menejerlar"
 
     def __str__(self):
-        return f"{self.name} {self.surname}".strip()
+        return f"{self.name} {self.surname}".__str__ip()
 
 
 # ─────────────────────────────────────────
@@ -63,14 +64,7 @@ class Student(models.Model):
         related_name="students",
     )
 
-    # ✅ YANGI: Guruh - studentlar guruhdan kunlarni olib oladi
-    group = models.ForeignKey(
-        "Group",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="group_students",
-    )
+    group = models.ForeignKey("Group", ..., related_name="group_students")
 
     stage = models.IntegerField(default=1)
     # ✅ schedule hozir aniqlangan bo'lmaydi - guruh schedule-dan olinadi
@@ -200,6 +194,8 @@ class Payment(models.Model):
     amount_due = models.IntegerField()
     is_paid = models.BooleanField(default=False)
     paid_at = models.DateTimeField(null=True, blank=True)
+    paid_amount = models.IntegerField(default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -227,8 +223,15 @@ class Group(models.Model):
     students = models.ManyToManyField(Student, related_name="groups")
     lesson_time = models.TimeField(null=False, blank=False)
     room = models.CharField(max_length=50, blank=True, default="", verbose_name="Xona")
-    
-    # ✅ YANGI: Schedule guruhda saqlanadi
+    course = models.ForeignKey(
+        "Course",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="groups",
+        verbose_name=_("Course"),
+    )
+
     schedule = models.CharField(
         max_length=10,
         choices=SCHEDULE_CHOICES,
@@ -368,3 +371,12 @@ class Order(models.Model):
 
     def __str__(self):
         return f"{self.student} — {self.product_name} — {self.status}"
+
+
+class Course(models.Model):
+    name = models.CharField(max_length=100)
+    monthly_fee = models.DecimalField(max_digits=12, decimal_places=2)
+    monthly_fee = models.IntegerField(default=0)  
+
+    def __str__(self):
+        return self.name

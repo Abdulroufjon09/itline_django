@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Student, Group, Teacher
+from .models import Student, Group, Teacher,Course
 
 
 class TeacherMiniSerializer(serializers.ModelSerializer):
@@ -15,6 +15,11 @@ class StudentSerializer(serializers.ModelSerializer):
 
 
 class GroupSerializer(serializers.ModelSerializer):
+    course_name = serializers.CharField(source="course.name", read_only=True)
+    monthly_fee = serializers.DecimalField(
+        source="course.monthly_fee", max_digits=12, decimal_places=2, read_only=True
+    )
+
     students_count = serializers.SerializerMethodField()
     students = StudentSerializer(many=True, read_only=True)
     teacher = TeacherMiniSerializer(read_only=True)  # ✅ endi to'liq obyekt qaytaradi
@@ -25,3 +30,14 @@ class GroupSerializer(serializers.ModelSerializer):
 
     def get_students_count(self, obj):
         return obj.students.count()
+
+
+class CourseSerializer(serializers.ModelSerializer):
+    groups_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Course
+        fields = ["id", "name", "monthly_fee", "groups_count"]
+
+    def get_groups_count(self, obj):
+        return obj.groups.count()

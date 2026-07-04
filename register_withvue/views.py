@@ -23,6 +23,7 @@ from .models import (
     Product,
     Order,
     AttendanceCoinSettings,
+    Course,
 )
 
 ADMIN_PASSWORD = "excel2024"
@@ -50,27 +51,45 @@ HOMEWORK_MISSED_COINS = -20
 
 class StudentMinimalSerializer(serializers.ModelSerializer):
     """Guruh students uchun minimal ma'lumot."""
+
     class Meta:
         model = Student
-        fields = ['id', 'name', 'surname', 'phone', 'stage', 'schedule']
+        fields = ["id", "name", "surname", "phone", "stage", "schedule"]
+
+
+class TeacherMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Teacher
+        fields = ["id", "name", "phone", "is_senior"]
+
+
+class CourseSerializer(serializers.ModelSerializer):
+    groups_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Course
+        fields = ["id", "name", "monthly_fee", "groups_count"]
+
+    def get_groups_count(self, obj):
+        return obj.groups.count()
 
 
 class GroupSerializer(serializers.ModelSerializer):
-    """Guruh serializer - students ma'lumoti ham shu yerda."""
-    teacher = serializers.SerializerMethodField()
+    course_name = serializers.CharField(source="course.name", read_only=True)
+    monthly_fee = serializers.DecimalField(
+        source="course.monthly_fee", max_digits=12, decimal_places=2, read_only=True
+    )
+
+    students_count = serializers.SerializerMethodField()
     students = StudentMinimalSerializer(many=True, read_only=True)
-    
+    teacher = TeacherMiniSerializer(read_only=True)  # ✅ endi to'liq obyekt qaytaradi
+
     class Meta:
         model = Group
-        fields = ['id', 'name', 'teacher', 'students', 'lesson_time', 'room', 'schedule']
-    
-    def get_teacher(self, obj):
-        if obj.teacher:
-            return {
-                'id': obj.teacher.id,
-                'name': obj.teacher.name
-            }
-        return None
+        fields = "__all__"
+
+    def get_students_count(self, obj):
+        return obj.students.count()
 
 
 # ─────────────────────────────
@@ -1209,15 +1228,17 @@ def update_payment_amount(request, payment_id):
 
 
 def get_groups(request):
-    """Barcha guruhlarni olish."""
-    groups = Group.objects.select_related("teacher").prefetch_related("students")
+    groups = Group.objects.select_related("teacher", "course").prefetch_related(
+        "group_students"
+    )
     serializer = GroupSerializer(groups, many=True)
     return JsonResponse(serializer.data, safe=False)
 
 
 def get_group(request, group_id):
-    """Bitta guruh ma'lumotlarini olish."""
-    group = Group.objects.filter(id=group_id).first()
+    group = (
+        Group.objects.select_related("teacher", "course").filter(id=group_id).first()
+    )
     if not group:
         return JsonResponse({"error": "Group topilmadi"}, status=404)
     serializer = GroupSerializer(group)
@@ -1226,37 +1247,31 @@ def get_group(request, group_id):
 
 @csrf_exempt
 def create_group(request):
-    """
-    Yangi guruh yaratish.
-    ✅ Schedule gurunga qo'yiladi, students avtomatik yangilanadi
-    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
-
         teacher = None
         if data.get("teacher_id"):
             teacher = Teacher.objects.filter(id=data.get("teacher_id")).first()
 
-        # ✅ Schedule guruhda saqlanadi
+        course = None
+        if data.get("course_id"):
+            course = Course.objects.filter(id=data.get("course_id")).first()
+
         group = Group.objects.create(
             name=data.get("name"),
             teacher=teacher,
+            course=course,
             lesson_time=data.get("lesson_time") or "09:00",
-            room=data.get("room", ""),
+            room=data.get("room") or "",
             schedule=data.get("schedule", "odd"),
         )
 
         student_ids = data.get("students", [])
         if student_ids:
-            group.students.set(student_ids)
-            # ✅ Studentlarning schedule-ini va group-ni sinkronlash
-            Student.objects.filter(id__in=student_ids).update(
-                group_id=group.id,
-                schedule=group.schedule,
-            )
+            Student.objects.filter(id__in=student_ids).update(group=group)
 
         serializer = GroupSerializer(group)
         return JsonResponse(serializer.data, status=201)
@@ -1267,52 +1282,32 @@ def create_group(request):
 
 @csrf_exempt
 def update_group(request, group_id):
-    """
-    Guruhni tahrirlash.
-    ✅ Schedule o'zgarsa, barcha studentlar avtomatik yangilanadi
-    """
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
         group = Group.objects.filter(id=group_id).first()
-
         if not group:
             return JsonResponse({"error": "Group topilmadi"}, status=404)
 
-        old_schedule = group.schedule
-
         if "name" in data:
             group.name = data["name"]
-
         if "teacher_id" in data:
             group.teacher = Teacher.objects.filter(id=data["teacher_id"]).first()
-
+        if "course_id" in data:
+            group.course = Course.objects.filter(id=data["course_id"]).first()
         if "lesson_time" in data:
             group.lesson_time = data["lesson_time"]
-
         if "room" in data:
             group.room = data["room"]
-
         if "schedule" in data:
             group.schedule = data["schedule"]
 
         group.save()
 
         if "students" in data:
-            group.students.set(data["students"])
-            # ✅ Studentlarning group_id-sini va schedule-ini yangilash
-            Student.objects.filter(id__in=data["students"]).update(
-                group_id=group.id,
-                schedule=group.schedule,
-            )
-
-        # ✅ Agar schedule o'zgargan bo'lsa, barcha guruh studentlarini yangilash
-        if "schedule" in data and old_schedule != group.schedule:
-            Student.objects.filter(group_id=group.id).update(
-                schedule=group.schedule
-            )
+            Student.objects.filter(id__in=data["students"]).update(group=group)
 
         serializer = GroupSerializer(group)
         return JsonResponse(serializer.data, safe=False)
@@ -1323,10 +1318,6 @@ def update_group(request, group_id):
 
 @csrf_exempt
 def delete_group(request, group_id):
-    """
-    Guruhni o'chirish.
-    ✅ Studentlar o'chirilmadi, faqat guruhdan olib tashlanadi
-    """
     if request.method != "DELETE":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
@@ -1334,16 +1325,8 @@ def delete_group(request, group_id):
     if not group:
         return JsonResponse({"error": "Group topilmadi"}, status=404)
 
-    # ✅ Guruhga tegishli barcha studentlarni guruhdan olib tashla
-    Student.objects.filter(group_id=group.id).update(
-        group_id=None
-    )
-
     group.delete()
-
-    return JsonResponse(
-        {"message": "Group o'chirildi! Studentlar guruhdan olib tashlanildi (o'chirilmadi)"}
-    )
+    return JsonResponse({"message": "Group o'chirildi!"})
 
 
 # ─────────────────────────────
@@ -1712,3 +1695,91 @@ def resolve_order(request, order_id):
         return JsonResponse({"message": "Yangilandi!", "status": order.status})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
+
+
+def get_courses(request):
+    courses = Course.objects.all().order_by("name")
+    serializer = CourseSerializer(courses, many=True)
+    return JsonResponse(serializer.data, safe=False)
+
+
+def get_course(request, course_id):
+    course = Course.objects.filter(id=course_id).first()
+    if not course:
+        return JsonResponse({"error": "Course topilmadi"}, status=404)
+
+    serializer = CourseSerializer(course)
+    return JsonResponse(serializer.data, safe=False)
+
+
+@csrf_exempt
+def create_course(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+
+        name = data.get("name")
+        if not name:
+            return JsonResponse({"error": "Kurs nomi kiritilishi shart"}, status=400)
+
+        course = Course.objects.create(
+            name=name,
+            monthly_fee=data.get("monthly_fee") or 0,
+        )
+
+        serializer = CourseSerializer(course)
+        return JsonResponse(serializer.data, status=201)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def update_course(request, course_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+
+        course = Course.objects.filter(id=course_id).first()
+        if not course:
+            return JsonResponse({"error": "Course topilmadi"}, status=404)
+
+        if "name" in data:
+            course.name = data["name"]
+        if "monthly_fee" in data:
+            course.monthly_fee = data["monthly_fee"]
+
+        course.save()
+
+        serializer = CourseSerializer(course)
+        return JsonResponse(serializer.data, safe=False)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_course(request, course_id):
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    course = Course.objects.filter(id=course_id).first()
+    if not course:
+        return JsonResponse({"error": "Course topilmadi"}, status=404)
+
+    try:
+        course.delete()
+        return JsonResponse({"message": "Course o'chirildi!"})
+    except Exception as e:
+        # agar Group.course on_delete=PROTECT bo'lsa va bu kursda guruhlar bo'lsa,
+        # shu yerda xato qaytadi - foydalanuvchiga tushunarli xabar beramiz
+        return JsonResponse(
+            {
+                "error": "Bu kursga bog'langan guruhlar mavjud, avval ularni o'chiring yoki boshqa kursga o'tkazing"
+            },
+            status=400,
+        )
