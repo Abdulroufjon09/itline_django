@@ -74,7 +74,7 @@ class Student(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="group_students"
+        related_name="group_students",
     )
 
     stage = models.IntegerField(default=1)
@@ -436,3 +436,32 @@ class Order(models.Model):
 
     def __str__(self):
         return f"{self.student} — {self.product_name} — {self.status}"
+
+class News(models.Model):
+    PRIORITY_CHOICES = [
+        ("normal", "Oddiy"),
+        ("important", "Muhim"),
+        ("urgent", "Shoshilinch"),
+    ]
+
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    priority = models.CharField(
+        max_length=20, choices=PRIORITY_CHOICES, default="normal"
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="news_posts",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title

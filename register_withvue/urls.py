@@ -1,5 +1,7 @@
 from django.urls import path
 from . import views
+from .views import NewsListCreateView, NewsDetailView, ActiveNewsView
+
 
 urlpatterns = [
     # ───────────────────────────────
@@ -115,6 +117,10 @@ urlpatterns = [
     path("courses/create/", views.create_course),
     path("courses/update/<int:course_id>/", views.update_course),
     path("courses/delete/<int:course_id>/", views.delete_course),
+
+    path("news/", NewsListCreateView.as_view(), name="news-list-create"),
+    path("news/<int:pk>/", NewsDetailView.as_view(), name="news-detail"),
+    path("news/active/", ActiveNewsView.as_view(), name="news-active"),
 ]
 
 app_name = "register_withvue"

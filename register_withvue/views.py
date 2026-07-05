@@ -24,7 +24,12 @@ from .models import (
     Order,
     AttendanceCoinSettings,
     Course,
+    News
 )
+
+from django.utils import timezone
+from rest_framework import generics, permissions
+from .serializers import NewsSerializer
 
 ADMIN_PASSWORD = "excel2024"
 EXCELLENCE_PASSWORD = "excellence2024"
@@ -2356,3 +2361,42 @@ def delete_course(request, course_id):
                 status=400,
             )
         return JsonResponse({"error": str(e)}, status=400)
+
+class IsManagerOrReadOnly(permissions.BasePermission):
+    """Faqat admin/excellence yozishi, o'chirishi, o'zgartirishi mumkin."""
+
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        return (
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "role", None) in ["admin", "excellence"]
+        )
+
+
+class NewsListCreateView(generics.ListCreateAPIView):
+    serializer_class = NewsSerializer
+    permission_classes = [IsManagerOrReadOnly]
+    queryset = News.objects.all()
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class NewsDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = NewsSerializer
+    permission_classes = [IsManagerOrReadOnly]
+    queryset = News.objects.all()
+
+
+class ActiveNewsView(generics.ListAPIView):
+    """Board uchun — faqat aktiv va muddati o'tmagan yangiliklar."""
+    serializer_class = NewsSerializer
+    permission_classes = [permissions.AllowAny]  # yoki IsAuthenticated
+
+    def get_queryset(self):
+        now = timezone.now()
+        return News.objects.filter(is_active=True).exclude(
+            expires_at__isnull=False, expires_at__lt=now
+        )
