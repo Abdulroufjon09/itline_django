@@ -20,7 +20,7 @@ class Manager(models.Model):
         verbose_name_plural = "Menejerlar"
 
     def __str__(self):
-        return f"{self.name} {self.surname}".__str__ip()
+        return f"{self.name} {self.surname}"
 
 
 # ─────────────────────────────────────────
@@ -30,11 +30,15 @@ class Manager(models.Model):
 
 class Teacher(models.Model):
     name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=20, blank=True, unique=True)  # ✅ UNIQUE
-    password = models.CharField(max_length=255, blank=True)  # ✅ YANGI - password field
+    phone = models.CharField(max_length=20, blank=True, unique=True)
+    password = models.CharField(max_length=255, blank=True)
     is_senior = models.BooleanField(default=False)
     penalty_limit = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "O'qituvchi"
+        verbose_name_plural = "O'qituvchilar"
 
     def __str__(self):
         return self.name
@@ -64,10 +68,16 @@ class Student(models.Model):
         related_name="students",
     )
 
-    group = models.ForeignKey("Group", ..., related_name="group_students")
+    # ✅ FIX: on_delete qo'shildi
+    group = models.ForeignKey(
+        "Group",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="group_students"
+    )
 
     stage = models.IntegerField(default=1)
-    # ✅ schedule hozir aniqlangan bo'lmaydi - guruh schedule-dan olinadi
     schedule = models.CharField(
         max_length=10,
         choices=SCHEDULE_CHOICES,
@@ -79,6 +89,10 @@ class Student(models.Model):
     coin_balance = models.IntegerField(default=0, verbose_name="Coin balansi")
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "O'quvchi"
+        verbose_name_plural = "O'quvchilar"
 
     def __str__(self):
         return f"{self.name} {self.surname}"
@@ -100,6 +114,10 @@ class StagePrice(models.Model):
     stage = models.IntegerField(unique=True)
     price = models.IntegerField(default=0)
 
+    class Meta:
+        verbose_name = "Etap narxi"
+        verbose_name_plural = "Etap narxlari"
+
     def __str__(self):
         return f"{self.stage}-etap: {self.price}"
 
@@ -116,8 +134,12 @@ class Lesson(models.Model):
     )
     date = models.DateField()
 
+    class Meta:
+        verbose_name = "Dars"
+        verbose_name_plural = "Darslar"
+
     def __str__(self):
-        return self.title
+        return f"{self.title} ({self.date})"
 
 
 # ─────────────────────────────────────────
@@ -142,6 +164,8 @@ class Attendance(models.Model):
 
     class Meta:
         unique_together = ("student", "lesson")
+        verbose_name = "Davomat"
+        verbose_name_plural = "Davomatlar"
 
     def __str__(self):
         return f"{self.student} — {self.lesson} — {self.status}"
@@ -176,6 +200,10 @@ class StudentPenalty(models.Model):
     date = models.DateField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        verbose_name = "O'quvchi ja'zosi"
+        verbose_name_plural = "O'quvchi ja'zolari"
+
     def __str__(self):
         return f"{self.student} — {self.get_reason_display()} — {self.amount}"
 
@@ -200,9 +228,29 @@ class Payment(models.Model):
 
     class Meta:
         unique_together = ("student", "month")
+        verbose_name = "To'lov"
+        verbose_name_plural = "To'lovlar"
 
     def __str__(self):
         return f"{self.student} — {self.month} — {self.amount_due}"
+
+
+# ─────────────────────────────────────────
+# COURSE
+# ─────────────────────────────────────────
+
+
+class Course(models.Model):
+    name = models.CharField(max_length=100)
+    # ✅ FIX: IntegerField faqat bitta ta'rif
+    monthly_fee = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Kurs"
+        verbose_name_plural = "Kurslar"
+
+    def __str__(self):
+        return self.name
 
 
 # ─────────────────────────────────────────
@@ -224,7 +272,7 @@ class Group(models.Model):
     lesson_time = models.TimeField(null=False, blank=False)
     room = models.CharField(max_length=50, blank=True, default="", verbose_name="Xona")
     course = models.ForeignKey(
-        "Course",
+        Course,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -237,6 +285,10 @@ class Group(models.Model):
         choices=SCHEDULE_CHOICES,
         default="odd",
     )
+
+    class Meta:
+        verbose_name = "Guruh"
+        verbose_name_plural = "Guruhlar"
 
     def __str__(self):
         return self.name
@@ -333,7 +385,7 @@ class AttendanceCoinSettings(models.Model):
 
 
 # ─────────────────────────────────────────
-# MAGAZINE (DO'KON)
+# PRODUCT (DO'KON)
 # ─────────────────────────────────────────
 
 
@@ -346,8 +398,17 @@ class Product(models.Model):
     stock = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        verbose_name = "Mahsulot"
+        verbose_name_plural = "Mahsulotlar"
+
     def __str__(self):
         return f"{self.name} — {self.price_coins} coin"
+
+
+# ─────────────────────────────────────────
+# ORDER
+# ─────────────────────────────────────────
 
 
 class Order(models.Model):
@@ -369,14 +430,9 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
+    class Meta:
+        verbose_name = "Buyurtma"
+        verbose_name_plural = "Buyurtmalar"
+
     def __str__(self):
         return f"{self.student} — {self.product_name} — {self.status}"
-
-
-class Course(models.Model):
-    name = models.CharField(max_length=100)
-    monthly_fee = models.DecimalField(max_digits=12, decimal_places=2)
-    monthly_fee = models.IntegerField(default=0)  
-
-    def __str__(self):
-        return self.name
