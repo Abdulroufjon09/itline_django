@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -444,24 +445,34 @@ class News(models.Model):
         ("urgent", "Shoshilinch"),
     ]
 
-    title = models.CharField(max_length=200)
-    content = models.TextField()
+    title = models.CharField(max_length=200, verbose_name="Sarlavha")
+    content = models.TextField(verbose_name="Matn")
     priority = models.CharField(
-        max_length=20, choices=PRIORITY_CHOICES, default="normal"
+        max_length=20,
+        choices=PRIORITY_CHOICES,
+        default="normal",
+        verbose_name="Muhimlik",
     )
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True, verbose_name="Faol")
+
+    # ✅ Manager emas — Student (is_excellence=True bo'lgan)
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        "Student",
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name="news_posts",
+        verbose_name="Kim yaratdi",
     )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    expires_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True, verbose_name="Muddati")
 
     class Meta:
         ordering = ["-created_at"]
+        verbose_name = "Yangilik"
+        verbose_name_plural = "Yangiliklar"
 
     def __str__(self):
         return self.title

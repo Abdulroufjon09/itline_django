@@ -9,6 +9,7 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.db import models as db_models
 from rest_framework import serializers
 
+
 from .models import (
     Group,
     Student,
@@ -24,7 +25,7 @@ from .models import (
     Order,
     AttendanceCoinSettings,
     Course,
-    News
+    News,
 )
 
 from django.utils import timezone
@@ -160,7 +161,9 @@ def manager_register(request):
         phone = data.get("phone", "").strip()
 
         if not phone:
-            return JsonResponse({"error": "Telefon raqam kiritilishi shart"}, status=400)
+            return JsonResponse(
+                {"error": "Telefon raqam kiritilishi shart"}, status=400
+            )
 
         if Manager.objects.filter(phone=phone).exists():
             return JsonResponse(
@@ -444,7 +447,9 @@ def set_coin_balance(request, student_id):
         try:
             new_balance = int(new_balance)
         except (ValueError, TypeError):
-            return JsonResponse({"error": "coin_balance son bo'lishi kerak"}, status=400)
+            return JsonResponse(
+                {"error": "coin_balance son bo'lishi kerak"}, status=400
+            )
 
         student = Student.objects.filter(id=student_id).first()
         if not student:
@@ -509,7 +514,9 @@ def create_teacher(request):
         phone = data.get("phone", "").strip()
 
         if not phone:
-            return JsonResponse({"error": "Telefon raqam kiritilishi shart"}, status=400)
+            return JsonResponse(
+                {"error": "Telefon raqam kiritilishi shart"}, status=400
+            )
 
         if Teacher.objects.filter(phone=phone).exists():
             return JsonResponse(
@@ -628,7 +635,8 @@ def reassign_students(request):
 
         if not from_teacher_id or not to_teacher_id:
             return JsonResponse(
-                {"error": "from_teacher_id va to_teacher_id kiritilishi shart"}, status=400
+                {"error": "from_teacher_id va to_teacher_id kiritilishi shart"},
+                status=400,
             )
 
         if not Teacher.objects.filter(id=to_teacher_id).exists():
@@ -677,7 +685,9 @@ def update_stage_price(request, stage):
             stage = int(stage)
             price = int(price)
         except (ValueError, TypeError):
-            return JsonResponse({"error": "stage va price sonlar bo'lishi kerak"}, status=400)
+            return JsonResponse(
+                {"error": "stage va price sonlar bo'lishi kerak"}, status=400
+            )
 
         sp, _ = StagePrice.objects.get_or_create(stage=stage, defaults={"price": price})
         sp.price = price
@@ -783,10 +793,14 @@ def register_student(request):
         phone = data.get("phone", "").strip()
 
         if not phone:
-            return JsonResponse({"error": "Telefon raqam kiritilishi shart"}, status=400)
+            return JsonResponse(
+                {"error": "Telefon raqam kiritilishi shart"}, status=400
+            )
 
         if Student.objects.filter(phone=phone).exists():
-            return JsonResponse({"error": "Bu telefon raqam allaqachon mavjud"}, status=400)
+            return JsonResponse(
+                {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
+            )
 
         name = data.get("name", "").strip()
         if not name:
@@ -804,7 +818,9 @@ def register_student(request):
             if teacher_id:
                 teacher = Teacher.objects.filter(id=teacher_id).first()
 
-        password = make_password(data.get("password", "")) if data.get("password") else ""
+        password = (
+            make_password(data.get("password", "")) if data.get("password") else ""
+        )
 
         student = Student.objects.create(
             name=name,
@@ -860,7 +876,9 @@ def login_student(request):
         password = data.get("password")
 
         if not phone:
-            return JsonResponse({"error": "Telefon raqam kiritilishi shart"}, status=400)
+            return JsonResponse(
+                {"error": "Telefon raqam kiritilishi shart"}, status=400
+            )
 
         student = Student.objects.select_related("teacher").filter(phone=phone).first()
 
@@ -1078,7 +1096,10 @@ def update_attendance(request, attendance_id):
 
         if new_status == old_status:
             return JsonResponse(
-                {"message": "Status o'zgarmadi", "coin_balance": attendance.student.coin_balance}
+                {
+                    "message": "Status o'zgarmadi",
+                    "coin_balance": attendance.student.coin_balance,
+                }
             )
 
         attendance_coins = get_attendance_coins_map()
@@ -1137,7 +1158,9 @@ def get_student_attendance(request, student_id):
         if month:
             try:
                 year, mon = month.split("-")
-                qs = qs.filter(lesson__date__year=int(year), lesson__date__month=int(mon))
+                qs = qs.filter(
+                    lesson__date__year=int(year), lesson__date__month=int(mon)
+                )
             except ValueError:
                 return JsonResponse(
                     {"error": "month format 'YYYY-MM' bo'lishi kerak"}, status=400
@@ -1263,7 +1286,9 @@ def get_student_penalties(request, student_id):
         except ValueError:
             return JsonResponse({"error": "Invalid student_id"}, status=400)
 
-        penalties = StudentPenalty.objects.filter(student_id=student_id).order_by("-date")
+        penalties = StudentPenalty.objects.filter(student_id=student_id).order_by(
+            "-date"
+        )
         data = [
             {
                 "id": p.id,
@@ -1510,7 +1535,9 @@ def confirm_payment(request, payment_id):
             try:
                 payment.amount_due = int(data["amount_due"])
             except (ValueError, TypeError):
-                return JsonResponse({"error": "amount_due son bo'lishi kerak"}, status=400)
+                return JsonResponse(
+                    {"error": "amount_due son bo'lishi kerak"}, status=400
+                )
 
         payment.is_paid = data.get("is_paid", payment.is_paid)
         payment.paid_at = datetime.now() if payment.is_paid else None
@@ -1549,7 +1576,9 @@ def update_payment_amount(request, payment_id):
             try:
                 payment.amount_due = int(data["amount_due"])
             except (ValueError, TypeError):
-                return JsonResponse({"error": "amount_due son bo'lishi kerak"}, status=400)
+                return JsonResponse(
+                    {"error": "amount_due son bo'lishi kerak"}, status=400
+                )
 
         payment.save()
         return JsonResponse(
@@ -1590,7 +1619,9 @@ def get_group(request, group_id):
             return JsonResponse({"error": "Invalid group_id"}, status=400)
 
         group = (
-            Group.objects.select_related("teacher", "course").filter(id=group_id).first()
+            Group.objects.select_related("teacher", "course")
+            .filter(id=group_id)
+            .first()
         )
         if not group:
             return JsonResponse({"error": "Guruh topilmadi"}, status=404)
@@ -1682,7 +1713,9 @@ def update_group(request, group_id):
             group.name = data["name"].strip()
         if "teacher_id" in data:
             try:
-                group.teacher = Teacher.objects.filter(id=int(data["teacher_id"])).first()
+                group.teacher = Teacher.objects.filter(
+                    id=int(data["teacher_id"])
+                ).first()
             except ValueError:
                 group.teacher = None
         if "course_id" in data:
@@ -1958,7 +1991,9 @@ def create_product(request):
         name = data.get("name", "").strip()
 
         if not name:
-            return JsonResponse({"error": "Mahsulot nomi kiritilishi shart"}, status=400)
+            return JsonResponse(
+                {"error": "Mahsulot nomi kiritilishi shart"}, status=400
+            )
 
         try:
             price_coins = int(data.get("price_coins", 0))
@@ -2006,7 +2041,9 @@ def update_product(request, product_id):
             try:
                 product.price_coins = int(data["price_coins"])
             except (ValueError, TypeError):
-                return JsonResponse({"error": "price_coins son bo'lishi kerak"}, status=400)
+                return JsonResponse(
+                    {"error": "price_coins son bo'lishi kerak"}, status=400
+                )
         if "description" in data:
             product.description = data["description"].strip()
         if "is_active" in data:
@@ -2149,7 +2186,9 @@ def get_all_orders(request):
         if status:
             if status not in ["pending", "approved", "rejected"]:
                 return JsonResponse(
-                    {"error": "status 'pending', 'approved' yoki 'rejected' bo'lishi kerak"},
+                    {
+                        "error": "status 'pending', 'approved' yoki 'rejected' bo'lishi kerak"
+                    },
                     status=400,
                 )
             qs = qs.filter(status=status)
@@ -2182,7 +2221,8 @@ def resolve_order(request, order_id):
 
         if new_status not in ("approved", "rejected"):
             return JsonResponse(
-                {"error": "status 'approved' yoki 'rejected' bo'lishi kerak"}, status=400
+                {"error": "status 'approved' yoki 'rejected' bo'lishi kerak"},
+                status=400,
             )
 
         try:
@@ -2362,6 +2402,7 @@ def delete_course(request, course_id):
             )
         return JsonResponse({"error": str(e)}, status=400)
 
+
 class IsManagerOrReadOnly(permissions.BasePermission):
     """Faqat admin/excellence yozishi, o'chirishi, o'zgartirishi mumkin."""
 
@@ -2375,28 +2416,259 @@ class IsManagerOrReadOnly(permissions.BasePermission):
         )
 
 
-class NewsListCreateView(generics.ListCreateAPIView):
-    serializer_class = NewsSerializer
-    permission_classes = [IsManagerOrReadOnly]
-    queryset = News.objects.all()
-
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+# ─────────────────────────────
+# NEWS
+# ─────────────────────────────
 
 
-class NewsDetailView(generics.RetrieveUpdateDestroyAPIView):
-    serializer_class = NewsSerializer
-    permission_classes = [IsManagerOrReadOnly]
-    queryset = News.objects.all()
+def get_news(request):
+    """Barcha yangiliklar (admin/excellence panel uchun)."""
+    try:
+        qs = News.objects.select_related("created_by").all().order_by("-created_at")
+        data = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "content": n.content,
+                "priority": n.priority,
+                "priority_display": n.get_priority_display(),
+                "is_active": n.is_active,
+                "created_by_name": (
+                    f"{n.created_by.name} {n.created_by.surname}".strip()
+                    if n.created_by
+                    else ""
+                ),
+                "created_at": n.created_at.strftime("%Y-%m-%d %H:%M"),
+                "updated_at": n.updated_at.strftime("%Y-%m-%d %H:%M"),
+                "expires_at": (
+                    n.expires_at.strftime("%Y-%m-%dT%H:%M") if n.expires_at else None
+                ),
+            }
+            for n in qs
+        ]
+        return JsonResponse(data, safe=False)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
-class ActiveNewsView(generics.ListAPIView):
-    """Board uchun — faqat aktiv va muddati o'tmagan yangiliklar."""
-    serializer_class = NewsSerializer
-    permission_classes = [permissions.AllowAny]  # yoki IsAuthenticated
-
-    def get_queryset(self):
+def get_active_news(request):
+    """Board sahifasi uchun — faqat faol va muddati o'tmagan yangiliklar."""
+    try:
         now = timezone.now()
-        return News.objects.filter(is_active=True).exclude(
-            expires_at__isnull=False, expires_at__lt=now
+        qs = (
+            News.objects.filter(is_active=True)
+            .exclude(expires_at__isnull=False, expires_at__lt=now)
+            .order_by("-created_at")
         )
+        data = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "content": n.content,
+                "priority": n.priority,
+                "created_at": n.created_at.strftime("%Y-%m-%d %H:%M"),
+            }
+            for n in qs
+        ]
+        return JsonResponse(data, safe=False)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def get_news_detail(request, news_id):
+    """Bitta yangilik ma'lumoti."""
+    try:
+        try:
+            news_id = int(news_id)
+        except ValueError:
+            return JsonResponse({"error": "Invalid news_id"}, status=400)
+
+        news = News.objects.filter(id=news_id).first()
+        if not news:
+            return JsonResponse({"error": "Yangilik topilmadi"}, status=404)
+
+        return JsonResponse(
+            {
+                "id": news.id,
+                "title": news.title,
+                "content": news.content,
+                "priority": news.priority,
+                "is_active": news.is_active,
+                "created_at": news.created_at.strftime("%Y-%m-%d %H:%M"),
+                "expires_at": (
+                    news.expires_at.strftime("%Y-%m-%dT%H:%M")
+                    if news.expires_at
+                    else None
+                ),
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def _check_news_permission(user_id):
+    """user_id — Student.id bo'lishi kerak, is_excellence yoki is_admin bo'lishi shart."""
+    if not user_id:
+        return None, JsonResponse({"error": "user_id kiritilishi shart"}, status=400)
+
+    student = Student.objects.filter(id=user_id).first()
+    if not student or not (student.is_excellence or student.is_admin):
+        return None, JsonResponse({"error": "Ruxsat yo'q"}, status=403)
+
+    return student, None
+
+
+@csrf_exempt
+def create_news(request):
+    """Yangilik qo'shish — faqat is_excellence yoki is_admin studentga ruxsat."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+
+        student, error_response = _check_news_permission(data.get("user_id"))
+        if error_response:
+            return error_response
+
+        title = data.get("title", "").strip()
+        content = data.get("content", "").strip()
+
+        if not title:
+            return JsonResponse({"error": "title kiritilishi shart"}, status=400)
+        if not content:
+            return JsonResponse({"error": "content kiritilishi shart"}, status=400)
+
+        priority = data.get("priority", "normal")
+        if priority not in dict(News.PRIORITY_CHOICES):
+            return JsonResponse({"error": "Noto'g'ri priority qiymati"}, status=400)
+
+        expires_at = data.get("expires_at") or None
+        if expires_at:
+            try:
+                expires_at = datetime.strptime(expires_at[:16], "%Y-%m-%dT%H:%M")
+            except ValueError:
+                return JsonResponse(
+                    {"error": "expires_at format 'YYYY-MM-DDTHH:MM' bo'lishi kerak"},
+                    status=400,
+                )
+
+        news = News.objects.create(
+            title=title,
+            content=content,
+            priority=priority,
+            is_active=data.get("is_active", True),
+            expires_at=expires_at,
+            created_by=student,
+        )
+
+        return JsonResponse(
+            {
+                "id": news.id,
+                "message": "Yangilik muvaffaqiyatli qo'shildi!",
+                "title": news.title,
+                "priority": news.priority,
+            },
+            status=201,
+        )
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def update_news(request, news_id):
+    """Yangilikni tahrirlash yoki holatini o'zgartirish."""
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        try:
+            news_id = int(news_id)
+        except ValueError:
+            return JsonResponse({"error": "Invalid news_id"}, status=400)
+
+        news = News.objects.filter(id=news_id).first()
+        if not news:
+            return JsonResponse({"error": "Yangilik topilmadi"}, status=404)
+
+        _, error_response = _check_news_permission(data.get("user_id"))
+        if error_response:
+            return error_response
+
+        if "title" in data:
+            title = data["title"].strip()
+            if not title:
+                return JsonResponse(
+                    {"error": "title bo'sh bo'lishi mumkin emas"}, status=400
+                )
+            news.title = title
+
+        if "content" in data:
+            content = data["content"].strip()
+            if not content:
+                return JsonResponse(
+                    {"error": "content bo'sh bo'lishi mumkin emas"}, status=400
+                )
+            news.content = content
+
+        if "priority" in data:
+            if data["priority"] not in dict(News.PRIORITY_CHOICES):
+                return JsonResponse({"error": "Noto'g'ri priority qiymati"}, status=400)
+            news.priority = data["priority"]
+
+        if "is_active" in data:
+            news.is_active = bool(data["is_active"])
+
+        if "expires_at" in data:
+            expires_at = data["expires_at"]
+            if expires_at:
+                try:
+                    news.expires_at = datetime.strptime(
+                        expires_at[:16], "%Y-%m-%dT%H:%M"
+                    )
+                except ValueError:
+                    return JsonResponse(
+                        {
+                            "error": "expires_at format 'YYYY-MM-DDTHH:MM' bo'lishi kerak"
+                        },
+                        status=400,
+                    )
+            else:
+                news.expires_at = None
+
+        news.save()
+
+        return JsonResponse(
+            {
+                "message": "Yangilik yangilandi!",
+                "id": news.id,
+                "title": news.title,
+                "is_active": news.is_active,
+            }
+        )
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_news(request, news_id):
+    """Yangilikni o'chirish."""
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        try:
+            news_id = int(news_id)
+        except ValueError:
+            return JsonResponse({"error": "Invalid news_id"}, status=400)
+
+        news = News.objects.filter(id=news_id).first()
+        if not news:
+            return JsonResponse({"error": "Yangilik topilmadi"}, status=404)
+
+        news.delete()
+        return JsonResponse({"message": "Yangilik o'chirildi!"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)

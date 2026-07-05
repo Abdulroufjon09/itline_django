@@ -1,7 +1,13 @@
 from django.urls import path
 from . import views
-from .views import NewsListCreateView, NewsDetailView, ActiveNewsView
-
+from .views import (
+    get_news,
+    get_active_news,
+    get_news_detail,
+    create_news,
+    update_news,
+    delete_news,
+)
 
 urlpatterns = [
     # ───────────────────────────────
@@ -117,10 +123,13 @@ urlpatterns = [
     path("courses/create/", views.create_course),
     path("courses/update/<int:course_id>/", views.update_course),
     path("courses/delete/<int:course_id>/", views.delete_course),
-
-    path("news/", NewsListCreateView.as_view(), name="news-list-create"),
-    path("news/<int:pk>/", NewsDetailView.as_view(), name="news-detail"),
-    path("news/active/", ActiveNewsView.as_view(), name="news-active"),
+    # news
+    path("news/", get_news, name="news-list"),
+    path("news/active/", get_active_news, name="news-active"),
+    path("news/create/", create_news, name="news-create"),
+    path("news/<int:news_id>/", get_news_detail, name="news-detail"),
+    path("news/<int:news_id>/update/", update_news, name="news-update"),
+    path("news/<int:news_id>/delete/", delete_news, name="news-delete"),
 ]
 
 app_name = "register_withvue"
