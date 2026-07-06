@@ -69,15 +69,6 @@ class Student(models.Model):
         related_name="students",
     )
 
-    # ✅ FIX: on_delete qo'shildi
-    group = models.ForeignKey(
-        "Group",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="group_students",
-    )
-
     stage = models.IntegerField(default=1)
     schedule = models.CharField(
         max_length=10,

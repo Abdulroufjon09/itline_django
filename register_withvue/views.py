@@ -1675,11 +1675,12 @@ def create_group(request):
             schedule=schedule,
         )
 
+        # ✅ TO'G'RI - ManyToMany
         student_ids = data.get("students", [])
         if student_ids:
             try:
                 student_ids = [int(sid) for sid in student_ids]
-                Student.objects.filter(id__in=student_ids).update(group=group)
+                group.students.set(student_ids)
             except (ValueError, TypeError):
                 pass
 
@@ -1734,12 +1735,15 @@ def update_group(request, group_id):
 
         group.save()
 
+        # ✅ TO'G'RI - ManyToMany
         if "students" in data:
             try:
                 student_ids = [int(sid) for sid in data["students"]]
-                Student.objects.filter(id__in=student_ids).update(group=group)
-            except (ValueError, TypeError):
-                pass
+                group.students.set(student_ids)
+            except (ValueError, TypeError) as e:
+                return JsonResponse(
+                    {"error": f"Invalid student IDs: {str(e)}"}, status=400
+                )
 
         serializer = GroupSerializer(group)
         return JsonResponse(serializer.data, safe=False)
