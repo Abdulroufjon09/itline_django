@@ -1418,6 +1418,7 @@ def get_payments(request, student_id):
                 "month": p.month,
                 "stage": p.stage,
                 "amount_due": p.amount_due,
+                "paid_amount": p.paid_amount,
                 "is_paid": p.is_paid,
                 "paid_at": p.paid_at.strftime("%Y-%m-%d") if p.paid_at else None,
             }
@@ -1455,6 +1456,7 @@ def get_all_payments(request):
                 "month": p.month,
                 "stage": p.stage,
                 "amount_due": p.amount_due,
+                "paid_amount": p.paid_amount,
                 "is_paid": p.is_paid,
                 "paid_at": str(p.paid_at) if p.paid_at else None,
             }
@@ -1467,7 +1469,6 @@ def get_all_payments(request):
 
 @csrf_exempt
 def generate_payments(request):
-    """Oylik to'lovlarni yaratish."""
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -1539,6 +1540,15 @@ def confirm_payment(request, payment_id):
                     {"error": "amount_due son bo'lishi kerak"}, status=400
                 )
 
+        # ✅ QO'SHILDI: paid_amount ni ham saqlaymiz
+        if "paid_amount" in data:
+            try:
+                payment.paid_amount = int(data["paid_amount"])
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {"error": "paid_amount son bo'lishi kerak"}, status=400
+                )
+
         payment.is_paid = data.get("is_paid", payment.is_paid)
         payment.paid_at = datetime.now() if payment.is_paid else None
         payment.save()
@@ -1548,6 +1558,7 @@ def confirm_payment(request, payment_id):
                 "message": "To'lov yangilandi!",
                 "is_paid": payment.is_paid,
                 "amount_due": payment.amount_due,
+                "paid_amount": payment.paid_amount,  # ✅ QO'SHILDI
             }
         )
     except json.JSONDecodeError:
@@ -1580,22 +1591,32 @@ def update_payment_amount(request, payment_id):
                     {"error": "amount_due son bo'lishi kerak"}, status=400
                 )
 
+        # ✅ QO'SHILDI: paid_amount va is_paid ni ham qabul qilamiz
+        if "paid_amount" in data:
+            try:
+                payment.paid_amount = int(data["paid_amount"])
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {"error": "paid_amount son bo'lishi kerak"}, status=400
+                )
+
+        if "is_paid" in data:
+            payment.is_paid = bool(data["is_paid"])
+            payment.paid_at = datetime.now() if payment.is_paid else None
+
         payment.save()
         return JsonResponse(
             {
                 "message": "Summa yangilandi!",
                 "amount_due": payment.amount_due,
+                "paid_amount": payment.paid_amount,  # ✅ QO'SHILDI
+                "is_paid": payment.is_paid,
             }
         )
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
-
-
-# ─────────────────────────────
-# GROUPS
-# ─────────────────────────────
 
 
 def get_groups(request):
