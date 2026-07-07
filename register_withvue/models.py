@@ -429,6 +429,7 @@ class Order(models.Model):
     def __str__(self):
         return f"{self.student} — {self.product_name} — {self.status}"
 
+
 class News(models.Model):
     PRIORITY_CHOICES = [
         ("normal", "Oddiy"),
@@ -467,3 +468,34 @@ class News(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class Expense(models.Model):
+    CATEGORY_CHOICES = [
+        ("salary", "Maosh"),
+        ("utility", "Kommunal"),
+        ("equipment", "Qurilmalar"),
+        ("rent", "Ijara"),
+        ("marketing", "Marketing"),
+        ("other", "Boshqa"),
+    ]
+
+    title = models.CharField(max_length=200, verbose_name="Nomi")
+    amount = models.IntegerField(default=0, verbose_name="Summa")
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default="other",
+        verbose_name="Kategoriya",
+    )
+    date = models.DateField(default=timezone.now, verbose_name="Sana")
+    note = models.TextField(blank=True, verbose_name="Izoh")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+        verbose_name = "Xarajat"
+        verbose_name_plural = "Xarajatlar"
+
+    def __str__(self):
+        return f"{self.title} — {self.amount}"

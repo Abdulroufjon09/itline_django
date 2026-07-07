@@ -11,21 +11,9 @@ from rest_framework import serializers
 
 
 from .models import (
-    Group,
-    Student,
-    Teacher,
-    Lesson,
-    Attendance,
-    Payment,
-    StagePrice,
-    StudentPenalty,
-    Manager,
-    CoinTransaction,
-    Product,
-    Order,
-    AttendanceCoinSettings,
-    Course,
-    News,
+    Group, Student, Teacher, Lesson, Attendance, Payment, StagePrice,
+    StudentPenalty, Manager, CoinTransaction, Product, Order,
+    AttendanceCoinSettings, Course, News, Expense,
 )
 
 from django.utils import timezone
@@ -2697,3 +2685,245 @@ def delete_news(request, news_id):
         return JsonResponse({"message": "Yangilik o'chirildi!"})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
+
+# ─────────────────────────────
+# EXPENSES (XARAJATLAR)
+# ─────────────────────────────
+
+
+def get_expenses(request):
+    """Barcha xarajatlar (ixtiyoriy: oy bo'yicha filter)."""
+    try:
+        month = request.GET.get("month", "").strip()
+        qs = Expense.objects.all().order_by("-date", "-created_at")
+
+        if month:
+            try:
+                year, mon = month.split("-")
+                qs = qs.filter(date__year=int(year), date__month=int(mon))
+            except ValueError:
+                return JsonResponse(
+                    {"error": "month format 'YYYY-MM' bo'lishi kerak"}, status=400
+                )
+
+        data = [
+            {
+                "id": e.id,
+                "title": e.title,
+                "amount": e.amount,
+                "category": e.category,
+                "category_display": e.get_category_display(),
+                "date": str(e.date),
+                "note": e.note,
+            }
+            for e in qs
+        ]
+        return JsonResponse(data, safe=False)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def create_expense(request):
+    """Yangi xarajat qo'shish."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        title = data.get("title", "").strip()
+
+        if not title:
+            return JsonResponse({"error": "Nomi kiritilishi shart"}, status=400)
+
+        try:
+            amount = int(data.get("amount", 0))
+        except (ValueError, TypeError):
+            return JsonResponse({"error": "amount son bo'lishi kerak"}, status=400)
+
+        if amount <= 0:
+            return JsonResponse({"error": "amount 0 dan katta bo'lishi kerak"}, status=400)
+
+        category = data.get("category", "other")
+        if category not in dict(Expense.CATEGORY_CHOICES):
+            return JsonResponse({"error": "Noto'g'ri category qiymati"}, status=400)
+
+        expense_date_str = data.get("date", "").strip()
+        if expense_date_str:
+            try:
+                expense_date = datetime.strptime(expense_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return JsonResponse(
+                    {"error": "date format 'YYYY-MM-DD' bo'lishi kerak"}, status=400
+                )
+        else:
+            expense_date = timezone.now().date()
+
+        expense = Expense.objects.create(
+            title=title,
+            amount=amount,
+            category=category,
+            date=expense_date,
+            note=data.get("note", "").strip(),
+        )
+        return JsonResponse(
+            {
+                "id": expense.id,
+                "message": "Xarajat qo'shildi!",
+                "title": expense.title,
+                "amount": expense.amount,
+                "category": expense.category,
+                "category_display": expense.get_category_display(),
+                "date": str(expense.date),
+                "note": expense.note,
+            },
+            status=201,
+        )
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def update_expense(request, expense_id):
+    """Xarajatni yangilash."""
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        try:
+            expense_id = int(expense_id)
+        except ValueError:
+            return JsonResponse({"error": "Invalid expense_id"}, status=400)
+
+        expense = Expense.objects.filter(id=expense_id).first()
+        if not expense:
+            return JsonResponse({"error": "Xarajat topilmadi"}, status=404)
+
+        if "title" in data:
+            title = data["title"].strip()
+            if not title:
+                return JsonResponse(
+                    {"error": "title bo'sh bo'lishi mumkin emas"}, status=400
+                )
+            expense.title = title
+
+        if "amount" in data:
+            try:
+                expense.amount = int(data["amount"])
+            except (ValueError, TypeError):
+                return JsonResponse({"error": "amount son bo'lishi kerak"}, status=400)
+
+        if "category" in data:
+            if data["category"] not in dict(Expense.CATEGORY_CHOICES):
+                return JsonResponse({"error": "Noto'g'ri category qiymati"}, status=400)
+            expense.category = data["category"]
+
+        if "date" in data:
+            try:
+                expense.date = datetime.strptime(data["date"], "%Y-%m-%d").date()
+            except ValueError:
+                return JsonResponse(
+                    {"error": "date format 'YYYY-MM-DD' bo'lishi kerak"}, status=400
+                )
+
+        if "note" in data:
+            expense.note = data["note"].strip()
+
+        expense.save()
+        return JsonResponse({"message": "Xarajat yangilandi!"})
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def delete_expense(request, expense_id):
+    """Xarajatni o'chirish."""
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        try:
+            expense_id = int(expense_id)
+        except ValueError:
+            return JsonResponse({"error": "Invalid expense_id"}, status=400)
+
+        expense = Expense.objects.filter(id=expense_id).first()
+        if not expense:
+            return JsonResponse({"error": "Xarajat topilmadi"}, status=404)
+        expense.delete()
+        return JsonResponse({"message": "Xarajat o'chirildi!"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+# ─────────────────────────────
+# FINANCE SUMMARY (MOLIYAVIY HISOBOT)
+# ─────────────────────────────
+
+
+def get_finance_summary(request):
+    """
+    Berilgan oy uchun to'liq moliyaviy hisobot:
+    - jami studentlar soni
+    - shu oy uchun to'lov yozuvi yaratilgan studentlar soni
+    - to'lagan / to'lamagan studentlar soni
+    - agar hammasi to'lasa qancha pul yig'ilishi kerak (kutilayotgan summa)
+    - hozircha qancha pul yig'ildi (haqiqiy tushgan pul)
+    - shu oy uchun xarajatlar
+    - sof foyda/zarar
+    """
+    try:
+        month = request.GET.get("month", datetime.now().strftime("%Y-%m")).strip()
+        try:
+            year, mon = month.split("-")
+            int(year), int(mon)
+        except ValueError:
+            return JsonResponse(
+                {"error": "month format 'YYYY-MM' bo'lishi kerak"}, status=400
+            )
+
+        total_students = Student.objects.filter(
+            is_admin=False, is_excellence=False
+        ).count()
+
+        month_payments = Payment.objects.filter(month=month)
+        generated_count = month_payments.count()
+        paid_count = month_payments.filter(is_paid=True).count()
+        unpaid_count = generated_count - paid_count
+        not_generated_count = total_students - generated_count
+
+        expected_total = (
+            month_payments.aggregate(total=Sum("amount_due"))["total"] or 0
+        )
+        collected_total = (
+            month_payments.aggregate(total=Sum("paid_amount"))["total"] or 0
+        )
+        remaining_total = expected_total - collected_total
+
+        year_int, mon_int = int(year), int(mon)
+        month_expenses = Expense.objects.filter(
+            date__year=year_int, date__month=mon_int
+        )
+        expenses_total = month_expenses.aggregate(total=Sum("amount"))["total"] or 0
+
+        profit = collected_total - expenses_total
+
+        return JsonResponse(
+            {
+                "month": month,
+                "total_students": total_students,
+                "generated_count": generated_count,
+                "not_generated_count": not_generated_count,
+                "paid_count": paid_count,
+                "unpaid_count": unpaid_count,
+                "expected_total": expected_total,
+                "collected_total": collected_total,
+                "remaining_total": remaining_total,
+                "expenses_total": expenses_total,
+                "profit": profit,
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

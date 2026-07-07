@@ -130,6 +130,12 @@ urlpatterns = [
     path("news/<int:news_id>/", get_news_detail, name="news-detail"),
     path("news/<int:news_id>/update/", update_news, name="news-update"),
     path("news/<int:news_id>/delete/", delete_news, name="news-delete"),
+    
+    path("expenses/", views.get_expenses),
+    path("expenses/create/", views.create_expense),
+    path("expenses/<int:expense_id>/update/", views.update_expense),
+    path("expenses/<int:expense_id>/delete/", views.delete_expense),
+    path("finance-summary/", views.get_finance_summary),
 ]
 
 app_name = "register_withvue"
