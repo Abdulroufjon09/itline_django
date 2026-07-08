@@ -2858,12 +2858,74 @@ def delete_expense(request, expense_id):
         return JsonResponse({"error": str(e)}, status=400)
 
 
-# ─────────────────────────────
-# FINANCE SUMMARY (MOLIYAVIY HISOBOT)
-# ─────────────────────────────
-
-
 def get_finance_summary(request):
+    try:
+        month = request.GET.get("month", datetime.now().strftime("%Y-%m")).strip()
+        try:
+            year, mon = month.split("-")
+            int(year), int(mon)
+        except ValueError:
+            return JsonResponse(
+                {"error": "month format 'YYYY-MM' bo'lishi kerak"}, status=400
+            )
+
+        students = Student.objects.filter(is_admin=False, is_excellence=False)
+        total_students = students.count()
+
+        month_payments = Payment.objects.filter(month=month)
+        generated_count = month_payments.count()
+        paid_count = month_payments.filter(is_paid=True).count()
+        unpaid_count = generated_count - paid_count
+        not_generated_count = total_students - generated_count
+
+        stage_prices = {sp.stage: sp.price for sp in StagePrice.objects.all()}
+
+        generated_student_ids = set(
+            month_payments.values_list("student_id", flat=True)
+        )
+
+        # Payment yaratilgan studentlar uchun ularning haqiqiy amount_due qiymati ishlatiladi
+        expected_from_generated = (
+            month_payments.aggregate(total=Sum("amount_due"))["total"] or 0
+        )
+
+        # Payment yaratilmagan studentlar uchun joriy stage narxi bo'yicha hisoblanadi
+        expected_from_not_generated = 0
+        for s in students.exclude(id__in=generated_student_ids):
+            expected_from_not_generated += stage_prices.get(s.stage, 0)
+
+        expected_total = expected_from_generated + expected_from_not_generated
+
+        collected_total = (
+            month_payments.aggregate(total=Sum("paid_amount"))["total"] or 0
+        )
+        remaining_total = expected_total - collected_total
+
+        year_int, mon_int = int(year), int(mon)
+        month_expenses = Expense.objects.filter(
+            date__year=year_int, date__month=mon_int
+        )
+        expenses_total = month_expenses.aggregate(total=Sum("amount"))["total"] or 0
+
+        profit = collected_total - expenses_total
+
+        return JsonResponse(
+            {
+                "month": month,
+                "total_students": total_students,
+                "generated_count": generated_count,
+                "not_generated_count": not_generated_count,
+                "paid_count": paid_count,
+                "unpaid_count": unpaid_count,
+                "expected_total": expected_total,
+                "collected_total": collected_total,
+                "remaining_total": remaining_total,
+                "expenses_total": expenses_total,
+                "profit": profit,
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
     """
     Berilgan oy uchun to'liq moliyaviy hisobot:
     - jami studentlar soni
