@@ -333,10 +333,10 @@ class Command(BaseCommand):
             is_grad = "BITIRUVCHI" in name_raw.upper() or "BITIRUVCHI" in note_text.upper()
 
             student = Student.objects.create(
-                name=name,
-                surname=surname,
+                name=name[:100],
+                surname=surname[:100],
                 phone=self._uniq_student_phone(phones[0] if phones else ""),
-                phone2=phones[1] if len(phones) > 1 else "",
+                phone2=(phones[1] if len(phones) > 1 else "")[:50],
                 teacher=teacher,
                 schedule=schedule,
                 note=note_text,
@@ -405,13 +405,13 @@ class Command(BaseCommand):
                 continue
             note_text = " · ".join(notes)
             Lead.objects.create(
-                name=name or "(nomsiz)",
-                phone=phones[0] if phones else "",
-                phone2=phones[1] if len(phones) > 1 else "",
-                status=notes[0] if notes else "",
-                interest=interest,
+                name=(name or "(nomsiz)")[:200],
+                phone=(phones[0] if phones else "")[:50],
+                phone2=(phones[1] if len(phones) > 1 else "")[:50],
+                status=(notes[0] if notes else "")[:200],
+                interest=interest[:200],
                 note=note_text,
-                source_sheet=tab["title"],
+                source_sheet=tab["title"][:100],
                 source=SOURCE,
             )
             stats["leads"] += 1
@@ -434,10 +434,10 @@ class Command(BaseCommand):
                 notes.append(c)
             name, surname = split_name(first)
             Student.objects.create(
-                name=name,
-                surname=surname,
+                name=name[:100],
+                surname=surname[:100],
                 phone=self._uniq_student_phone(phones[0] if phones else ""),
-                phone2=phones[1] if len(phones) > 1 else "",
+                phone2=(phones[1] if len(phones) > 1 else "")[:50],
                 is_graduate=True,
                 note=" · ".join(notes),
                 source=SOURCE,
