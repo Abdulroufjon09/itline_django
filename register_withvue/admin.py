@@ -10,6 +10,8 @@ from .models import (
     StudentPenalty,
     CoinTransaction,
     Group,
+    Lead,
+    AdChannel,
 )
 
 
@@ -112,3 +114,16 @@ class GroupAdmin(admin.ModelAdmin):
         return obj.students.count()
 
     students_count.short_description = "O'quvchilar soni"
+
+
+@admin.register(Lead)
+class LeadAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "phone", "phone2", "status", "interest", "source_sheet")
+    list_filter = ("source_sheet",)
+    search_fields = ("name", "phone", "phone2", "status")
+
+
+@admin.register(AdChannel)
+class AdChannelAdmin(admin.ModelAdmin):
+    list_display = ("id", "username", "title")
+    search_fields = ("username", "title")

@@ -131,6 +131,12 @@ urlpatterns = [
     path("news/<int:news_id>/update/", update_news, name="news-update"),
     path("news/<int:news_id>/delete/", delete_news, name="news-delete"),
     
+    # ───────────────────────────────
+    # LEADS / REKLAMA (import qilingan baza)
+    # ───────────────────────────────
+    path("leads/", views.get_leads),
+    path("ad-channels/", views.get_ad_channels),
+    path("graduates/", views.get_graduates),
     path("expenses/", views.get_expenses),
     path("expenses/create/", views.create_expense),
     path("expenses/<int:expense_id>/update/", views.update_expense),

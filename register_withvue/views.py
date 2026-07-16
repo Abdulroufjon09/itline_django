@@ -13,7 +13,7 @@ from rest_framework import serializers
 from .models import (
     Group, Student, Teacher, Lesson, Attendance, Payment, StagePrice,
     StudentPenalty, Manager, CoinTransaction, Product, Order,
-    AttendanceCoinSettings, Course, News, Expense,
+    AttendanceCoinSettings, Course, News, Expense, Lead, AdChannel,
 )
 
 from django.utils import timezone
@@ -697,7 +697,7 @@ def get_students(request):
     try:
         teacher_id = request.GET.get("teacher_id")
         qs = Student.objects.select_related("teacher").filter(
-            is_admin=False, is_excellence=False
+            is_admin=False, is_excellence=False, is_graduate=False
         )
         if teacher_id and teacher_id != "null":
             try:
@@ -710,7 +710,8 @@ def get_students(request):
                 "id": s.id,
                 "name": s.name,
                 "surname": s.surname,
-                "phone": s.phone,
+                "phone": "" if s.phone.startswith("—") else s.phone,
+                "phone2": s.phone2,
                 "teacher_id": s.teacher_id,
                 "teacher_name": s.teacher.name if s.teacher else "Biriktirilmagan",
                 "stage": s.stage,
@@ -1922,7 +1923,7 @@ def get_leaderboard(request):
     try:
         teacher_id = request.GET.get("teacher_id", "").strip()
         qs = Student.objects.select_related("teacher").filter(
-            is_admin=False, is_excellence=False
+            is_admin=False, is_excellence=False, is_graduate=False
         )
         if teacher_id:
             try:
@@ -2869,7 +2870,9 @@ def get_finance_summary(request):
                 {"error": "month format 'YYYY-MM' bo'lishi kerak"}, status=400
             )
 
-        students = Student.objects.filter(is_admin=False, is_excellence=False)
+        students = Student.objects.filter(
+            is_admin=False, is_excellence=False, is_graduate=False
+        )
         total_students = students.count()
 
         month_payments = Payment.objects.filter(month=month)
@@ -2987,5 +2990,78 @@ def get_finance_summary(request):
                 "profit": profit,
             }
         )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+# ─────────────────────────────
+# LEADS (Potensial mijozlar)
+# ─────────────────────────────
+
+
+def get_leads(request):
+    """Barcha leadlar (potensial mijozlar). Ixtiyoriy ?sheet= filtri."""
+    try:
+        qs = Lead.objects.all().order_by("id")
+        sheet = request.GET.get("sheet", "").strip()
+        if sheet:
+            qs = qs.filter(source_sheet=sheet)
+
+        leads = [
+            {
+                "id": l.id,
+                "name": l.name,
+                "phone": l.phone,
+                "phone2": l.phone2,
+                "status": l.status,
+                "interest": l.interest,
+                "note": l.note,
+                "source_sheet": l.source_sheet,
+            }
+            for l in qs
+        ]
+
+        # varaqlar bo'yicha guruhlash uchun statistika
+        sheets = list(
+            Lead.objects.values("source_sheet")
+            .order_by("source_sheet")
+            .annotate(count=db_models.Count("id"))
+        )
+
+        return JsonResponse({"count": len(leads), "sheets": sheets, "leads": leads})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def get_ad_channels(request):
+    """Telegram reklama kanallari."""
+    try:
+        channels = [
+            {"id": c.id, "username": c.username, "title": c.title, "note": c.note}
+            for c in AdChannel.objects.all().order_by("id")
+        ]
+        return JsonResponse({"count": len(channels), "channels": channels})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def get_graduates(request):
+    """Bitiruvchilar (is_graduate=True) ro'yxati."""
+    try:
+        qs = Student.objects.select_related("teacher").filter(
+            is_graduate=True
+        ).order_by("name")
+        data = [
+            {
+                "id": s.id,
+                "name": s.name,
+                "surname": s.surname,
+                "phone": s.phone if not s.phone.startswith("—") else "",
+                "phone2": s.phone2,
+                "teacher_name": s.teacher.name if s.teacher else "",
+                "note": s.note,
+            }
+            for s in qs
+        ]
+        return JsonResponse({"count": len(data), "graduates": data})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)

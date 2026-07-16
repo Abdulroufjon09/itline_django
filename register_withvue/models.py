@@ -35,6 +35,7 @@ class Teacher(models.Model):
     password = models.CharField(max_length=255, blank=True)
     is_senior = models.BooleanField(default=False)
     penalty_limit = models.IntegerField(default=0)
+    source = models.CharField(max_length=30, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -59,6 +60,7 @@ class Student(models.Model):
     name = models.CharField(max_length=100)
     surname = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, unique=True)
+    phone2 = models.CharField(max_length=50, blank=True, verbose_name="Qo'shimcha telefon")
     password = models.CharField(max_length=255, blank=True)
 
     teacher = models.ForeignKey(
@@ -77,8 +79,12 @@ class Student(models.Model):
     )
     is_admin = models.BooleanField(default=False)
     is_excellence = models.BooleanField(default=False)
+    is_graduate = models.BooleanField(default=False, verbose_name="Bitiruvchi")
 
     coin_balance = models.IntegerField(default=0, verbose_name="Coin balansi")
+
+    note = models.TextField(blank=True, verbose_name="Izoh")
+    source = models.CharField(max_length=30, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -215,6 +221,7 @@ class Payment(models.Model):
     is_paid = models.BooleanField(default=False)
     paid_at = models.DateTimeField(null=True, blank=True)
     paid_amount = models.IntegerField(default=0)
+    source = models.CharField(max_length=30, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -236,6 +243,7 @@ class Course(models.Model):
     name = models.CharField(max_length=100)
     # ✅ FIX: IntegerField faqat bitta ta'rif
     monthly_fee = models.IntegerField(default=0)
+    source = models.CharField(max_length=30, blank=True, default="")
 
     class Meta:
         verbose_name = "Kurs"
@@ -277,6 +285,7 @@ class Group(models.Model):
         choices=SCHEDULE_CHOICES,
         default="odd",
     )
+    source = models.CharField(max_length=30, blank=True, default="")
 
     class Meta:
         verbose_name = "Guruh"
@@ -468,6 +477,56 @@ class News(models.Model):
 
     def __str__(self):
         return self.title
+
+
+# ─────────────────────────────────────────
+# LEAD (Potensial mijozlar — Google Sheets'dan)
+# ─────────────────────────────────────────
+
+
+class Lead(models.Model):
+    name = models.CharField(max_length=200, verbose_name="Ism")
+    phone = models.CharField(max_length=50, blank=True, verbose_name="Telefon")
+    phone2 = models.CharField(
+        max_length=50, blank=True, verbose_name="Qo'shimcha telefon"
+    )
+    status = models.CharField(max_length=200, blank=True, verbose_name="Holat")
+    interest = models.CharField(
+        max_length=200, blank=True, verbose_name="Qiziqish / Kurs"
+    )
+    note = models.TextField(blank=True, verbose_name="Izoh")
+    source_sheet = models.CharField(
+        max_length=100, blank=True, verbose_name="Manba varaq"
+    )
+    source = models.CharField(max_length=30, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Lead (potensial mijoz)"
+        verbose_name_plural = "Leadlar"
+
+    def __str__(self):
+        return f"{self.name} — {self.phone}"
+
+
+# ─────────────────────────────────────────
+# AD CHANNEL (Telegram reklama kanallari)
+# ─────────────────────────────────────────
+
+
+class AdChannel(models.Model):
+    username = models.CharField(max_length=150, verbose_name="Kanal (@username)")
+    title = models.CharField(max_length=200, blank=True, verbose_name="Nomi")
+    note = models.TextField(blank=True, verbose_name="Izoh")
+    source = models.CharField(max_length=30, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Reklama kanali"
+        verbose_name_plural = "Reklama kanallari"
+
+    def __str__(self):
+        return self.username
 
 
 class Expense(models.Model):
