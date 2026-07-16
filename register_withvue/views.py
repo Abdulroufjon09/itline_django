@@ -3065,3 +3065,160 @@ def get_graduates(request):
         return JsonResponse({"count": len(data), "graduates": data})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+# ─────────────────────────────
+# TELEGRAM XABARLAR
+# ─────────────────────────────
+
+
+@csrf_exempt
+def tg_webhook(request):
+    """Telegram webhook — bot update'larini qabul qiladi."""
+    if request.method != "POST":
+        return JsonResponse({"ok": True})
+    try:
+        from . import telegram as tg
+
+        update = json.loads(request.body or "{}")
+        tg.handle_update(update)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("tg_webhook xatosi")
+    # Telegram har doim 200 kutadi, aks holda qayta yuboraveradi
+    return JsonResponse({"ok": True})
+
+
+def tg_status(request):
+    """Botga ulangan o'quvchilar (frontend indikator uchun)."""
+    try:
+        from .models import TelegramSubscriber
+
+        student_ids = list(
+            TelegramSubscriber.objects.filter(student__isnull=False)
+            .values_list("student_id", flat=True)
+            .distinct()
+        )
+        return JsonResponse(
+            {"count": len(student_ids), "student_ids": student_ids}
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def _do_send(students, text, kind, month=""):
+    """Yuborish: kichik ro'yxat sinxron, katta ro'yxat fon oqimida."""
+    from . import telegram as tg
+    from .models import TelegramSubscriber
+
+    students = list(students)
+    linked = TelegramSubscriber.objects.filter(student__in=students).count()
+
+    if len(students) <= 30:
+        sent, failed, no_chat = tg.send_to_students(students, text, kind, month)
+        return {
+            "sent": sent,
+            "failed": failed,
+            "no_chat": no_chat,
+            "async": False,
+        }
+
+    tg.send_to_students_async(students, text, kind, month)
+    return {
+        "queued": linked,
+        "no_chat": len(students) - linked,
+        "async": True,
+    }
+
+
+@csrf_exempt
+def send_message_student(request):
+    """Bitta o'quvchiga xabar. Body: {student_id, text, month?}"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        student_id = data.get("student_id")
+        text = (data.get("text") or "").strip()
+        if not student_id or not text:
+            return JsonResponse(
+                {"error": "student_id va text majburiy"}, status=400
+            )
+        student = Student.objects.filter(id=student_id).first()
+        if not student:
+            return JsonResponse({"error": "O'quvchi topilmadi"}, status=404)
+        result = _do_send([student], text, "single", data.get("month", ""))
+        return JsonResponse(result)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def send_message_group(request):
+    """Guruhdagi barcha o'quvchilarga xabar. Body: {group_id, text, month?}"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        group_id = data.get("group_id")
+        text = (data.get("text") or "").strip()
+        if not group_id or not text:
+            return JsonResponse({"error": "group_id va text majburiy"}, status=400)
+        group = Group.objects.filter(id=group_id).first()
+        if not group:
+            return JsonResponse({"error": "Guruh topilmadi"}, status=404)
+        students = group.students.filter(is_admin=False, is_excellence=False)
+        result = _do_send(students, text, "group", data.get("month", ""))
+        result["group"] = group.name
+        result["total"] = students.count()
+        return JsonResponse(result)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def send_message_all(request):
+    """Barcha faol o'quvchilarga xabar. Body: {text, month?}"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        text = (data.get("text") or "").strip()
+        if not text:
+            return JsonResponse({"error": "text majburiy"}, status=400)
+        students = Student.objects.filter(
+            is_admin=False, is_excellence=False, is_graduate=False
+        )
+        result = _do_send(students, text, "all", data.get("month", ""))
+        result["total"] = students.count()
+        return JsonResponse(result)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def get_message_history(request):
+    """Yuborilgan xabarlar tarixi (oxirgi 200 ta)."""
+    try:
+        from .models import SentMessage
+
+        qs = SentMessage.objects.select_related("student")[:200]
+        data = [
+            {
+                "id": m.id,
+                "student": (
+                    f"{m.student.name} {m.student.surname}".strip()
+                    if m.student
+                    else ""
+                ),
+                "kind": m.kind,
+                "text": m.text[:120],
+                "status": m.status,
+                "error": m.error,
+                "created_at": m.created_at.strftime("%Y-%m-%d %H:%M"),
+            }
+            for m in qs
+        ]
+        return JsonResponse({"messages": data})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

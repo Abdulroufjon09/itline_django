@@ -529,6 +529,70 @@ class AdChannel(models.Model):
         return self.username
 
 
+# ─────────────────────────────────────────
+# TELEGRAM XABAR TIZIMI
+# ─────────────────────────────────────────
+
+
+class TelegramSubscriber(models.Model):
+    """Botga ulangan (telefonini yuborgan) foydalanuvchi."""
+
+    chat_id = models.BigIntegerField(unique=True, verbose_name="Telegram chat ID")
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tg_subscribers",
+        verbose_name="O'quvchi",
+    )
+    phone = models.CharField(max_length=20, blank=True, verbose_name="Telefon")
+    tg_name = models.CharField(max_length=200, blank=True, verbose_name="TG ismi")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Telegram obunachi"
+        verbose_name_plural = "Telegram obunachilar"
+
+    def __str__(self):
+        return f"{self.tg_name or self.chat_id} → {self.student or 'ulanmagan'}"
+
+
+class SentMessage(models.Model):
+    KIND_CHOICES = [
+        ("single", "Bitta o'quvchi"),
+        ("group", "Guruh"),
+        ("all", "Barcha o'quvchilar"),
+    ]
+    STATUS_CHOICES = [
+        ("sent", "Yuborildi"),
+        ("failed", "Xato"),
+        ("no_chat", "Botga ulanmagan"),
+    ]
+
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sent_messages",
+    )
+    chat_id = models.BigIntegerField(null=True, blank=True)
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default="single")
+    text = models.TextField(verbose_name="Matn")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="sent")
+    error = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Yuborilgan xabar"
+        verbose_name_plural = "Yuborilgan xabarlar"
+
+    def __str__(self):
+        return f"{self.student} — {self.status}"
+
+
 class Expense(models.Model):
     CATEGORY_CHOICES = [
         ("salary", "Maosh"),

@@ -188,13 +188,6 @@ class Command(BaseCommand):
         if not tabs:
             raise CommandError("JSON faylda 'tabs' bo'sh")
 
-        # DB'da band bo'lgan telefonlar (real + import) — unikallik uchun
-        self.used_student_phones = set(
-            Student.objects.values_list("phone", flat=True)
-        )
-        self.used_teacher_phones = set(
-            Teacher.objects.values_list("phone", flat=True)
-        )
         self._syn = 0
 
         stats = {"teachers": 0, "courses": 0, "groups": 0,
@@ -202,6 +195,16 @@ class Command(BaseCommand):
 
         with transaction.atomic():
             self._clear_previous()
+
+            # DB'da band bo'lgan telefonlar — MUHIM: eski import
+            # o'chirilgandan KEYIN yig'iladi, aks holda barcha telefonlar
+            # "band" bo'lib sintetik raqam berilib ketadi
+            self.used_student_phones = set(
+                Student.objects.values_list("phone", flat=True)
+            )
+            self.used_teacher_phones = set(
+                Teacher.objects.values_list("phone", flat=True)
+            )
 
             for tab in tabs:
                 cat = tab.get("category")

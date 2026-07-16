@@ -34,6 +34,8 @@ INSTALLED_APPS = [
 
 # MIDDLEWARE
 MIDDLEWARE = [
+    # JSON javoblarni siqish — katta ro'yxatlar (~10x kichikroq) tezroq yuklanadi
+    "django.middleware.gzip.GZipMiddleware",
     "config.middleware.JsonExceptionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
@@ -146,3 +148,11 @@ CORS_ALLOWED_ORIGINS = [
 
 # test uchun
 CORS_ALLOW_ALL_ORIGINS = True
+
+# ─────────────────────────────
+# TELEGRAM BOT (o'quvchilarga xabar yuborish)
+# Tavsiya: tokenni Render'da TG_BOT_TOKEN env o'zgaruvchisiga ko'chiring
+# ─────────────────────────────
+TG_BOT_TOKEN = os.environ.get(
+    "TG_BOT_TOKEN", "8741000264:AAHFZ8IXiH3JmhfE-TBE7-OJbDcODvi7wDA"
+)

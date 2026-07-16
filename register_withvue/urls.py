@@ -137,6 +137,15 @@ urlpatterns = [
     path("leads/", views.get_leads),
     path("ad-channels/", views.get_ad_channels),
     path("graduates/", views.get_graduates),
+    # ───────────────────────────────
+    # TELEGRAM XABARLAR
+    # ───────────────────────────────
+    path("tg/webhook/", views.tg_webhook),
+    path("tg/status/", views.tg_status),
+    path("messages/send/", views.send_message_student),
+    path("messages/send-group/", views.send_message_group),
+    path("messages/send-all/", views.send_message_all),
+    path("messages/history/", views.get_message_history),
     path("expenses/", views.get_expenses),
     path("expenses/create/", views.create_expense),
     path("expenses/<int:expense_id>/update/", views.update_expense),

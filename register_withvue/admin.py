@@ -127,3 +127,19 @@ class LeadAdmin(admin.ModelAdmin):
 class AdChannelAdmin(admin.ModelAdmin):
     list_display = ("id", "username", "title")
     search_fields = ("username", "title")
+
+
+from .models import TelegramSubscriber, SentMessage
+
+
+@admin.register(TelegramSubscriber)
+class TelegramSubscriberAdmin(admin.ModelAdmin):
+    list_display = ("id", "chat_id", "student", "phone", "tg_name", "created_at")
+    search_fields = ("phone", "tg_name", "student__name")
+
+
+@admin.register(SentMessage)
+class SentMessageAdmin(admin.ModelAdmin):
+    list_display = ("id", "student", "kind", "status", "error", "created_at")
+    list_filter = ("kind", "status")
+    search_fields = ("student__name", "text")
