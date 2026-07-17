@@ -40,15 +40,27 @@ TEACHER_NAMES = {
     "xusmer": "Xusmer",
 }
 
-# Guruh kodidan kurs nomi
-COURSE_BY_CODE = [
-    (r"\bK[\.\/ ]?S\b", "Kompyuter savodxonligi"),
-    (r"\bKS\b", "Kompyuter savodxonligi"),
-    (r"\bSMM\b", "SMM"),
-    (r"\bADV\b", "Advanced"),
-    (r"\bG[\.\/\\ ]?D\b", "Grafik dizayn"),
-    (r"\bFR\b", "Frontend"),
+# Import versiyasi — mapping o'zgarsa oshiriladi, server qayta import qiladi
+DATA_VERSION = "4"
+
+# Guruh kodidan kurs: (regex, to'liq nom, qisqa nom)
+# Tartib muhim: FR "DASTURLASH FR 18" kabi holatlarda DASTURLASHdan ustun
+COURSE_DEFS = [
+    (r"\bK[\.\/\\]?S\b|\bK[\.\/\\]?S\d|KS\s*#", "Kompyuter savodxonligi", "K/S"),
+    (r"\bFR\b|\bFR\d", "Frontend", "FR"),
+    (r"\bSMM\b", "SMM", "SMM"),
+    (r"\bADV\b", "Advanced", "ADV"),
+    (r"\bG[\.\/\\]?D\b|\bG[\.\/\\]?D\d", "Grafik dizayn", "G/D"),
+    (r"DASTURLASH", "Dasturlash", "Dasturlash"),
+    (r"BOSHLANG", "Boshlang'ich savodxonlik", "Savodxonlik"),
+    (r"INGLIZ", "Ingliz tili", "Ingliz tili"),
 ]
+
+# Guruh raqami: K/S 81, K/S #85, ks99, KS# 100, FR20, DASTURLASH22, G/D#12 ...
+NUM_RE = re.compile(
+    r"(?:K[\.\/\\]?S|KS|FR|G[\.\/\\]?D|ADV|SMM|DASTURLASH)\s*#?\s*\/?\s*(\d{1,3})\b",
+    re.I,
+)
 
 MONTH_TOKENS = {
     "sen": 9, "sent": 9, "sentabr": 9, "sentyabr": 9,
@@ -101,43 +113,77 @@ def is_amount(cell):
     return None
 
 
-def looks_like_header(cell):
-    """Guruh sarlavhasi qatorimi (K/S #85 ..., SMM #16 ..., G\\D 9 ...)."""
-    s = str(cell).upper()
-    return bool(
-        re.search(r"#\s*\d", s)
-        or re.search(r"\b(K[\.\/]?S|SMM|ADV|G[\.\/\\]?D|D[\.\/]?CH[\.\/]?J|S[\.\/]?P[\.\/]?SH)\b", s)
-    )
+def parse_course(header):
+    """Sarlavhadan kursni aniqlaydi → (to'liq nom, qisqa nom) yoki None."""
+    up = str(header).upper()
+    for pat, name, short in COURSE_DEFS:
+        if re.search(pat, up):
+            return name, short
+    return None
 
 
 def parse_schedule(header):
-    s = header.upper().replace(" ", "")
-    if re.search(r"S[\.\/]?P[\.\/]?SH", s):
-        return "even"
-    # D/CH/J yoki D/J → odd
-    if re.search(r"D[\.\/]?CH[\.\/]?J|D[\.\/]?J", s):
+    """Dars kunlarini aniqlaydi → 'odd' / 'even' / None.
+
+    Formatlar: D/CH/J, D.CH.J., D;CH;J;, D,ch,j, D /CH/JU  → odd
+               S/P/SH, S.P.SH., SE/PAY/SHAN, SE/PE/SH(A), S/SH → even
+               D/J → odd
+    """
+    up = str(header).upper()
+    letters = re.sub(r"[^A-Z]", "", up)
+    for token in ("SEPAYSHAN", "SEPESHA", "SEPESH", "SPSH"):
+        if token in letters:
+            return "even"
+    if "DCHJ" in letters:
         return "odd"
-    return "odd"
+    if re.search(r"\bS\s*[\/,\.]\s*SH\b", up):
+        return "even"
+    if re.search(r"\bD\s*[\/,\.]\s*J\b", up):
+        return "odd"
+    return None
+
+
+def looks_like_header(cell):
+    """Guruh sarlavhasi qatorimi (K/S #85 S/P/SH 9:30 ..., SMM #16 D/J ...)."""
+    s = str(cell)
+    if re.search(r"#\s*\d", s):
+        return True
+    course = parse_course(s)
+    if course is not None:
+        # "ingliz mental yoshda" kabi izohlar guruh bo'lib ketmasligi uchun:
+        # zaif kalit so'zli kurslarda kun yoki soat ham bo'lishi shart
+        if course[0] in ("Ingliz tili", "Boshlang'ich savodxonlik"):
+            return (
+                parse_schedule(s) is not None
+                or re.search(r"\d{1,2}[:;]\d{2}", s) is not None
+            )
+        return True
+    if parse_schedule(s) is not None:
+        return True
+    return False
 
 
 def parse_time(header):
-    """Sarlavhadan dars vaqtini ('9:00', '10:30', '14:00') ajratadi.
+    """Sarlavhadan dars vaqtini ajratadi.
 
-    Faqat ':' bilan yozilgan vaqtlarni oladi — '14.01.2026' kabi sanalar emas.
+    Formatlar: '9:00', '16;00', '10:30', '8;30' hamda '1700' (K/S 95 1700).
+    '14.01.2026' kabi sanalar vaqt sifatida olinmaydi.
     """
-    for m in re.finditer(r"(\d{1,2}):(\d{2})", header):
+    for m in re.finditer(r"(\d{1,2})[:;](\d{2})", str(header)):
         h, mi = int(m.group(1)), int(m.group(2))
-        if 0 <= h <= 23 and 0 <= mi <= 59:
+        if 7 <= h <= 20 and mi <= 59:
+            return timezone.datetime.min.time().replace(hour=h, minute=mi)
+    # 4 xonali '1700' ko'rinishi — yillar (2025/2026) minut tekshiruvidan o'tmaydi
+    for m in re.finditer(r"\b(\d{4})\b", str(header)):
+        h, mi = int(m.group(1)[:2]), int(m.group(1)[2:])
+        if 7 <= h <= 20 and mi in (0, 15, 30, 45):
             return timezone.datetime.min.time().replace(hour=h, minute=mi)
     return timezone.datetime.min.time().replace(hour=9, minute=0)
 
 
-def parse_course_name(header):
-    up = header.upper()
-    for pat, name in COURSE_BY_CODE:
-        if re.search(pat, up):
-            return name
-    return "Umumiy kurs"
+def parse_group_number(header):
+    m = NUM_RE.search(str(header))
+    return m.group(1) if m else None
 
 
 def split_name(full):
@@ -189,6 +235,7 @@ class Command(BaseCommand):
             raise CommandError("JSON faylda 'tabs' bo'sh")
 
         self._syn = 0
+        self._course_amounts = {}  # course_id → [to'lov summalari]
 
         stats = {"teachers": 0, "courses": 0, "groups": 0,
                  "students": 0, "payments": 0, "leads": 0, "ads": 0, "graduates": 0}
@@ -216,6 +263,21 @@ class Command(BaseCommand):
                     self._import_alumni(tab, stats)
                 elif cat == "ads":
                     self._import_ads(tab, stats)
+
+            # Kurs oylik narxi — eng ko'p uchraydigan to'lov summasi
+            from collections import Counter
+
+            for course_id, amounts in self._course_amounts.items():
+                if amounts:
+                    fee = Counter(amounts).most_common(1)[0][0]
+                    Course.objects.filter(id=course_id).update(monthly_fee=fee)
+
+            # Import versiyasini saqlaymiz — server startida solishtiriladi
+            from register_withvue.models import SheetImportMeta
+
+            SheetImportMeta.objects.update_or_create(
+                pk=1, defaults={"version": DATA_VERSION}
+            )
 
         self.stdout.write(self.style.SUCCESS("Import yakunlandi:"))
         for k, v in stats.items():
@@ -252,6 +314,9 @@ class Command(BaseCommand):
                 return cand
 
     # ── GURUH varag'i ──
+    # Har bir varaqda bir nechta guruh bo'ladi. Har bir sarlavha qatori
+    # ("K/S #85 S/P/SH 9:30 12.05.2026") yangi guruhni boshlaydi — kurs,
+    # dars kunlari va soati aynan shu sarlavhadan olinadi.
     def _import_group(self, tab, stats):
         rows = tab["rows"]
         slug = tab["slug"]
@@ -262,118 +327,145 @@ class Command(BaseCommand):
         )
         stats["teachers"] += 1
 
-        # Sarlavha qatorini topamiz. Varaqda bir nechta kichik guruh bo'lishi
-        # mumkin — barcha sarlavha/oy qatorlarini o'tkazib yuboramiz, faqat
-        # birinchisini guruh nomi uchun saqlaymiz.
-        header_text = ""
-        month_cols = {}  # ustun indeksi → oy raqami (oxirgi ko'rilgan sarlavhadan)
-        data_rows = []
-        for r in rows:
-            first = str(r[0]).strip() if r else ""
-            # oylik sarlavha qatori (sent/okt/noy...)?
-            month_hits = {
+        current = None  # {"group","schedule","month_cols"}
+
+        def month_hits_of(r):
+            return {
                 i: MONTH_TOKENS[str(c).strip().lower()]
                 for i, c in enumerate(r)
                 if str(c).strip().lower() in MONTH_TOKENS
             }
-            if len(month_hits) >= 2:
-                month_cols = month_hits
-                continue
-            # guruh/kichik-guruh sarlavhasi → o'tkazamiz
-            if looks_like_header(first):
-                if not header_text:
-                    header_text = first
-                continue
-            # haqiqiy o'quvchi qatori?
-            if valid_person_name(first) and not extract_phone(first):
-                data_rows.append(r)
 
-        if not header_text:
-            header_text = tab["title"]
+        def start_group(header_text):
+            course_info = parse_course(header_text)
+            if course_info:
+                course_name, short = course_info
+            else:
+                course_name, short = "Umumiy kurs", "Guruh"
 
-        course_name = parse_course_name(header_text)
-        course, created = Course.objects.get_or_create(
-            name=course_name,
-            source=SOURCE,
-            defaults={"monthly_fee": 0},
-        )
-        if created:
-            stats["courses"] += 1
+            course, created = Course.objects.get_or_create(
+                name=course_name, source=SOURCE, defaults={"monthly_fee": 0}
+            )
+            if created:
+                stats["courses"] += 1
 
-        schedule = parse_schedule(header_text)
-        lesson_time = parse_time(header_text)
-        group = Group.objects.create(
-            name=f"{teacher_name} — {course_name}",
-            teacher=teacher,
-            lesson_time=lesson_time,
-            schedule=schedule,
-            course=course,
-            source=SOURCE,
-        )
-        stats["groups"] += 1
+            num = parse_group_number(header_text)
+            gname = f"{short} #{num}" if num else f"{short} — {teacher_name}"
+            schedule = parse_schedule(header_text) or "odd"
+            lesson_time = parse_time(header_text)
 
-        for r in data_rows:
-            name_raw = str(r[0]).strip()
-            phones, amounts, notes = [], [], []
-            for ci, c in enumerate(r):
-                if ci == 0:
-                    continue
-                c = str(c).strip()
-                if not c:
-                    continue
-                ph = extract_phone(c)
-                if ph and len(phones) < 2:
-                    phones.append(ph)
-                    continue
-                amt = is_amount(c)
-                if amt is not None:
-                    amounts.append((ci, amt))  # ustun indeksi bilan
-                    continue
-                notes.append(c)
-
-            name, surname = split_name(name_raw)
-            note_text = " · ".join(notes)
-            is_grad = "BITIRUVCHI" in name_raw.upper() or "BITIRUVCHI" in note_text.upper()
-
-            student = Student.objects.create(
-                name=name[:100],
-                surname=surname[:100],
-                phone=self._uniq_student_phone(phones[0] if phones else ""),
-                phone2=(phones[1] if len(phones) > 1 else "")[:50],
+            # Ayni o'qituvchida bir xil nomli guruh takror kelsa — qayta ishlatamiz
+            group, g_created = Group.objects.get_or_create(
+                name=gname[:100],
                 teacher=teacher,
-                schedule=schedule,
-                note=note_text,
-                is_graduate=is_grad,
+                source=SOURCE,
+                defaults={
+                    "lesson_time": lesson_time,
+                    "schedule": schedule,
+                    "course": course,
+                },
+            )
+            if g_created:
+                stats["groups"] += 1
+            return {"group": group, "schedule": schedule, "month_cols": {}}
+
+        for r in rows:
+            first = str(r[0]).strip() if r else ""
+            hits = month_hits_of(r)
+
+            if first and looks_like_header(first):
+                current = start_group(first)
+                if len(hits) >= 2:
+                    current["month_cols"] = hits
+                continue
+
+            # alohida oy sarlavhasi qatori (sent/okt/noy...)
+            if len(hits) >= 2:
+                if current:
+                    current["month_cols"] = hits
+                continue
+
+            if not (valid_person_name(first) and not extract_phone(first)):
+                continue
+
+            # sarlavhadan oldingi qatorlar: faqat telefoni bo'lsa olamiz
+            row_has_phone = any(extract_phone(str(c)) for c in r[1:])
+            if current is None:
+                if not row_has_phone:
+                    continue
+                current = start_group("")
+
+            self._add_group_student(r, teacher, current, stats)
+
+    def _add_group_student(self, r, teacher, current, stats):
+        group = current["group"]
+        schedule = current["schedule"]
+        month_cols = current["month_cols"]
+
+        name_raw = str(r[0]).strip()
+        phones, amounts, notes = [], [], []
+        for ci, c in enumerate(r):
+            if ci == 0:
+                continue
+            c = str(c).strip()
+            if not c:
+                continue
+            ph = extract_phone(c)
+            if ph and len(phones) < 2:
+                phones.append(ph)
+                continue
+            amt = is_amount(c)
+            if amt is not None:
+                amounts.append((ci, amt))
+                continue
+            notes.append(c)
+
+        name, surname = split_name(name_raw)
+        note_text = " · ".join(notes)
+        is_grad = (
+            "BITIRUVCHI" in name_raw.upper() or "BITIRUVCHI" in note_text.upper()
+        )
+
+        student = Student.objects.create(
+            name=name[:100],
+            surname=surname[:100],
+            phone=self._uniq_student_phone(phones[0] if phones else ""),
+            phone2=(phones[1] if len(phones) > 1 else "")[:50],
+            teacher=teacher,
+            schedule=schedule,
+            note=note_text,
+            is_graduate=is_grad,
+            source=SOURCE,
+        )
+        group.students.add(student)
+        stats["students"] += 1
+
+        # To'lovlar: oy ustuni aniq bo'lsa u bo'yicha, aks holda sentabrdan ketma-ket
+        used_months = set()
+        seq_i = 0
+        for ci, amt in amounts:
+            if month_cols and ci in month_cols:
+                m = month_cols[ci]
+            else:
+                m = DEFAULT_MONTHS[seq_i % 12]
+                seq_i += 1
+            ms = month_str(m)
+            if ms in used_months:
+                continue
+            used_months.add(ms)
+            Payment.objects.create(
+                student=student,
+                month=ms,
+                stage=1,
+                amount_due=amt,
+                is_paid=True,
+                paid_amount=amt,
+                paid_at=timezone.now(),
                 source=SOURCE,
             )
-            group.students.add(student)
-            stats["students"] += 1
-
-            # To'lovlarni oyga moslaymiz: oy sarlavhasi bo'lsa ustun bo'yicha,
-            # aks holda ketma-ket (sentabrdan boshlab).
-            used_months = set()
-            seq_i = 0
-            for ci, amt in amounts:
-                if month_cols and ci in month_cols:
-                    m = month_cols[ci]
-                else:
-                    m = DEFAULT_MONTHS[seq_i % 12]
-                    seq_i += 1
-                ms = month_str(m)
-                if ms in used_months:
-                    continue
-                used_months.add(ms)
-                Payment.objects.create(
-                    student=student,
-                    month=ms,
-                    stage=1,
-                    amount_due=amt,
-                    is_paid=True,
-                    paid_amount=amt,
-                    paid_at=timezone.now(),
-                    source=SOURCE,
-                )
-                stats["payments"] += 1
+            stats["payments"] += 1
+            # kurs oylik narxini aniqlash uchun yig'amiz
+            self._course_amounts.setdefault(group.course_id, []).append(amt)
 
     # ── LEADLAR ──
     def _import_leads(self, tab, stats):
@@ -384,9 +476,10 @@ class Command(BaseCommand):
         )
         for r in tab["rows"]:
             first = str(r[0]).strip() if r else ""
-            if not first or looks_like_header(first):
+            # Leadlarda faqat aniq guruh-sarlavhalarni tashlaymiz (#12, D/CH/J...)
+            # — "dasturlashga qiziqadi" kabi kurs so'zli leadlar qolsin
+            if not first or re.search(r"#\s*\d", first) or parse_schedule(first):
                 continue
-            # sarlavha/telefon bo'lgan birinchi katak nomi bo'lmasligi mumkin
             name = first if not extract_phone(first) else ""
             phones, notes, interest = [], [], ""
             start = 0 if name else 0

@@ -1780,8 +1780,19 @@ def delete_group(request, group_id):
         if not group:
             return JsonResponse({"error": "Guruh topilmadi"}, status=404)
 
+        # ?with_students=1 — kurs tugaganda studentlarni ham o'chirish.
+        # Faqat boshqa guruhga a'zo bo'lmagan studentlar o'chiriladi.
+        deleted_students = 0
+        if request.GET.get("with_students") in ("1", "true"):
+            for s in list(group.students.all()):
+                if s.groups.count() <= 1:
+                    s.delete()
+                    deleted_students += 1
+
         group.delete()
-        return JsonResponse({"message": "Guruh o'chirildi!"})
+        return JsonResponse(
+            {"message": "Guruh o'chirildi!", "deleted_students": deleted_students}
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -3222,3 +3233,29 @@ def get_message_history(request):
         return JsonResponse({"messages": data})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+# ─────────────────────────────
+# STUDENT O'CHIRISH + PING
+# ─────────────────────────────
+
+
+@csrf_exempt
+def delete_student(request, student_id):
+    """O'quvchini butunlay o'chiradi (to'lovlari/davomatlari bilan birga)."""
+    if request.method not in ("POST", "DELETE"):
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        student = Student.objects.filter(id=student_id).first()
+        if not student:
+            return JsonResponse({"error": "O'quvchi topilmadi"}, status=404)
+        name = f"{student.name} {student.surname}".strip()
+        student.delete()
+        return JsonResponse({"success": True, "deleted": name})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def ping(request):
+    """Server uyg'oqligini tekshirish / uyg'otish uchun engil endpoint."""
+    return JsonResponse({"ok": True})

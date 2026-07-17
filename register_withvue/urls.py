@@ -39,6 +39,8 @@ urlpatterns = [
     # ───────────────────────────────
     path("students/", views.get_students),
     path("students/update/<int:student_id>/", views.update_student),
+    path("students/delete/<int:student_id>/", views.delete_student),
+    path("ping/", views.ping),
     path("register/", views.register_student),
     path("login/", views.login_student),
     # ───────────────────────────────

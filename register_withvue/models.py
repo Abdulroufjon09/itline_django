@@ -529,6 +529,20 @@ class AdChannel(models.Model):
         return self.username
 
 
+class SheetImportMeta(models.Model):
+    """Sheet importining versiyasi — mapping o'zgarganda avto qayta import uchun."""
+
+    version = models.CharField(max_length=20, default="")
+    imported_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Sheet import holati"
+        verbose_name_plural = "Sheet import holati"
+
+    def __str__(self):
+        return f"v{self.version} ({self.imported_at:%Y-%m-%d %H:%M})"
+
+
 # ─────────────────────────────────────────
 # TELEGRAM XABAR TIZIMI
 # ─────────────────────────────────────────

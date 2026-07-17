@@ -20,15 +20,20 @@ application = get_wsgi_application()
 
 def _startup_tasks():
     """Render'da build vaqtida migrate ishlamasa ham, server ko'tarilganda
-    migratsiyalarni va (bir martalik) sheet importini bajaradi."""
+    migratsiyalarni bajaradi. Sheet importi bo'lmasa yoki versiyasi eskirgan
+    bo'lsa — qayta import qiladi."""
     try:
         from django.core.management import call_command
 
         call_command("migrate", interactive=False)
 
-        from register_withvue.models import Lead
+        from register_withvue.models import Lead, SheetImportMeta
+        from register_withvue.management.commands.load_sheet_data import (
+            DATA_VERSION,
+        )
 
-        if not Lead.objects.exists():
+        meta = SheetImportMeta.objects.filter(pk=1).first()
+        if not Lead.objects.exists() or not meta or meta.version != DATA_VERSION:
             call_command("load_sheet_data")
     except Exception:
         logging.exception("Startup migrate/load_sheet_data xatosi")
