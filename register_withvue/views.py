@@ -772,6 +772,45 @@ def update_student(request, student_id):
         return JsonResponse({"error": str(e)}, status=400)
 
 
+import re as _re
+
+
+def _digits9(phone):
+    """Telefonning oxirgi 9 raqami — turli formatlarni solishtirish uchun."""
+    d = _re.sub(r"\D", "", str(phone or ""))
+    return d[-9:] if len(d) >= 9 else ""
+
+
+def _find_student_by_any_phone(phone):
+    """Studentni telefon bo'yicha topadi — format farqiga qaramasdan.
+
+    '+998903068558' ham, '90 306 85 58' ham bir xil studentga olib keladi.
+    """
+    exact = Student.objects.select_related("teacher").filter(phone=phone).first()
+    if exact:
+        return exact
+    target = _digits9(phone)
+    if not target:
+        return None
+    for s in Student.objects.select_related("teacher").all():
+        if _digits9(s.phone) == target or _digits9(s.phone2) == target:
+            return s
+    return None
+
+
+def _name_password_matches(student, password):
+    """Import qilingan studentlar uchun parol — ism va familiya.
+
+    Katta-kichik harf, bo'shliq va ' belgilar farq qilmaydi:
+    'Abdulloh Ibrohimov', 'abdullohibrohimov' — ikkalasi ham to'g'ri.
+    """
+    def norm(s):
+        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+
+    full = norm(f"{student.name}{student.surname}")
+    return bool(full) and norm(password) == full
+
+
 @csrf_exempt
 def register_student(request):
     """O'quvchi ro'yxatdan o'tkazish."""
@@ -786,9 +825,15 @@ def register_student(request):
                 {"error": "Telefon raqam kiritilishi shart"}, status=400
             )
 
-        if Student.objects.filter(phone=phone).exists():
+        if _find_student_by_any_phone(phone):
             return JsonResponse(
-                {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
+                {
+                    "error": (
+                        "Bu telefon raqam allaqachon ro'yxatda bor. "
+                        "Kirish uchun parol sifatida ism va familiyangizni yozing."
+                    )
+                },
+                status=400,
             )
 
         name = data.get("name", "").strip()
@@ -869,12 +914,23 @@ def login_student(request):
                 {"error": "Telefon raqam kiritilishi shart"}, status=400
             )
 
-        student = Student.objects.select_related("teacher").filter(phone=phone).first()
+        student = _find_student_by_any_phone(phone)
 
         if password is None:
             return JsonResponse({"exists": bool(student)})
 
-        if student and check_password(password, student.password):
+        password_ok = False
+        if student:
+            if student.password:
+                password_ok = check_password(password, student.password)
+            if not password_ok:
+                # Parol o'rnatilmagan (importdan kelgan) studentlar uchun
+                # parol — ism va familiya
+                password_ok = not student.password and _name_password_matches(
+                    student, password
+                )
+
+        if student and password_ok:
             return JsonResponse(
                 {
                     "exists": True,
