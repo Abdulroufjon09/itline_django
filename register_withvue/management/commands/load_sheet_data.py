@@ -72,7 +72,7 @@ EXTRA_TEACHERS = [
 ]
 
 # Import versiyasi — mapping o'zgarsa oshiriladi, server qayta import qiladi
-DATA_VERSION = "8"
+DATA_VERSION = "9"
 
 # Guruh kodidan kurs: (regex, to'liq nom, qisqa nom)
 # Tartib muhim: FR "DASTURLASH FR 18" kabi holatlarda DASTURLASHdan ustun
@@ -315,6 +315,7 @@ class Command(BaseCommand):
             raise CommandError("JSON faylda 'tabs' bo'sh")
 
         self._syn = 0
+        self._pending_admins = []
         self._course_amounts = {}  # course_id → [to'lov summalari]
 
         stats = {"teachers": 0, "courses": 0, "groups": 0,
@@ -348,6 +349,9 @@ class Command(BaseCommand):
             for name, phone in EXTRA_TEACHERS:
                 self._create_teacher(name, phone)
                 stats["teachers"] += 1
+
+            # Ustozlarning admin profillari (o'quvchilardan keyin)
+            self._create_admin_profiles()
 
             # Kurs oylik narxi — eng ko'p uchraydigan to'lov summasi
             from collections import Counter
@@ -409,13 +413,42 @@ class Command(BaseCommand):
                 return cand
 
     def _create_teacher(self, name, phone=""):
-        """O'qituvchi yaratadi — parol har doim excel2024."""
-        return Teacher.objects.create(
+        """O'qituvchi yaratadi — parol har doim excel2024.
+
+        Loyihada "admin" deganda Teacher yozuvi bilan bog'langan
+        Student(is_admin=True) tushuniladi (register_student shunday
+        yaratadi). Shu sababli har bir ustozga admin-profil ham
+        ochamiz — aks holda ustoz tizimga o'quvchi bo'lib kiradi va
+        admin panelga o'tolmaydi.
+        """
+        teacher = Teacher.objects.create(
             name=name,
             phone=self._uniq_teacher_phone(phone),
             password=make_password(DEFAULT_TEACHER_PASSWORD),
             source=SOURCE,
         )
+        # Admin profili o'quvchilar yaratilib bo'lgach ochiladi — shunda
+        # o'quvchilar o'z raqamlarini birinchi bo'lib egallaydi
+        self._pending_admins.append(teacher)
+        return teacher
+
+    def _create_admin_profiles(self):
+        """Har bir ustozga admin-profil (Student.is_admin) ochadi."""
+        for teacher in self._pending_admins:
+            first, last = split_name(teacher.name)
+            # Telefon o'quvchida band bo'lsa, haqiqiy raqam phone2 ga
+            # yoziladi — login ikkalasini ham tekshiradi
+            stored = self._uniq_student_phone(teacher.phone)
+            Student.objects.create(
+                name=first[:100],
+                surname=last[:100],
+                phone=stored,
+                phone2=(teacher.phone if stored != teacher.phone else "")[:50],
+                password=make_password(DEFAULT_TEACHER_PASSWORD),
+                teacher=teacher,
+                is_admin=True,
+                source=SOURCE,
+            )
 
     # ── GURUH varag'i ──
     # Har bir varaqda bir nechta guruh bo'ladi. Har bir sarlavha qatori
