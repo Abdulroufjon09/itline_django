@@ -798,6 +798,20 @@ def _find_student_by_any_phone(phone):
     return None
 
 
+def _find_teacher_by_any_phone(phone):
+    """O'qituvchini telefon bo'yicha topadi — format farqiga qaramasdan."""
+    exact = Teacher.objects.filter(phone=phone).first()
+    if exact:
+        return exact
+    target = _digits9(phone)
+    if not target:
+        return None
+    for t in Teacher.objects.all():
+        if _digits9(t.phone) == target:
+            return t
+    return None
+
+
 def _name_password_matches(student, password):
     """Import qilingan studentlar uchun parol — ism va familiya.
 
@@ -846,6 +860,38 @@ def register_student(request):
         is_admin = admin_password == ADMIN_PASSWORD
         is_excellence = excellence_password == EXCELLENCE_PASSWORD
 
+        # Oddiy o'quvchi uchun telefon bot orqali tasdiqlangan bo'lishi shart.
+        # Admin/excellence qo'shishda tasdiqlash talab qilinmaydi.
+        if not is_admin and not is_excellence:
+            from datetime import timedelta
+
+            from .models import PhoneVerification
+
+            deadline = timezone.now() - timedelta(minutes=30)
+            pv = (
+                PhoneVerification.objects.filter(
+                    phone=_digits9(phone),
+                    verified_at__isnull=False,
+                    used_at__isnull=True,
+                    verified_at__gte=deadline,
+                )
+                .order_by("-verified_at")
+                .first()
+            )
+            if not pv:
+                return JsonResponse(
+                    {
+                        "error": (
+                            "Telefon raqam tasdiqlanmagan. "
+                            "Avval bot orqali kod yuborib tasdiqlang."
+                        ),
+                        "need_verification": True,
+                    },
+                    status=403,
+                )
+            pv.used_at = timezone.now()
+            pv.save(update_fields=["used_at"])
+
         teacher = None
         if not is_admin and not is_excellence:
             teacher_id = data.get("teacher_id")
@@ -875,6 +921,14 @@ def register_student(request):
             )
             student.teacher = new_teacher
             student.save()
+
+        # Botga oldindan ulangan chat'ni yangi o'quvchiga bog'laymiz —
+        # shundan keyin unga xabarlar to'g'ridan-to'g'ri boradi
+        from .models import TelegramSubscriber
+
+        TelegramSubscriber.objects.filter(
+            phone=_digits9(phone), student__isnull=True
+        ).update(student=student)
 
         return JsonResponse(
             {
@@ -948,7 +1002,7 @@ def login_student(request):
                 }
             )
 
-        teacher = Teacher.objects.filter(phone=phone).first()
+        teacher = _find_teacher_by_any_phone(phone)
         if teacher and teacher.password and check_password(password, teacher.password):
             return JsonResponse(
                 {
@@ -3315,3 +3369,123 @@ def delete_student(request, student_id):
 def ping(request):
     """Server uyg'oqligini tekshirish / uyg'otish uchun engil endpoint."""
     return JsonResponse({"ok": True})
+
+
+# ─────────────────────────────
+# TELEFON TASDIQLASH (bot orqali kod)
+# ─────────────────────────────
+
+CODE_TTL_MINUTES = 10
+MAX_CODE_ATTEMPTS = 5
+
+
+@csrf_exempt
+def send_verification_code(request):
+    """Telefon raqamga bot orqali tasdiqlash kodi yuboradi.
+
+    Body: {phone}
+    Raqam botga ulanmagan bo'lsa — nima qilish kerakligi qaytariladi.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        import random
+
+        from .models import PhoneVerification, TelegramSubscriber
+        from . import telegram as tg
+
+        data = json.loads(request.body)
+        phone = (data.get("phone") or "").strip()
+        target = _digits9(phone)
+        if not target:
+            return JsonResponse(
+                {"error": "Telefon raqam to'liq kiritilmagan"}, status=400
+            )
+
+        if _find_student_by_any_phone(phone):
+            return JsonResponse(
+                {"error": "Bu raqam allaqachon ro'yxatda bor"}, status=400
+            )
+
+        sub = TelegramSubscriber.objects.filter(phone=target).first()
+        if not sub:
+            return JsonResponse(
+                {
+                    "sent": False,
+                    "not_linked": True,
+                    "bot_username": "itline_test_2026bot",
+                    "error": (
+                        "Bu raqam botga ulanmagan. O'quvchi avval "
+                        "@itline_test_2026bot ga kirib /start bosib, "
+                        "telefon raqamini yuborishi kerak."
+                    ),
+                },
+                status=404,
+            )
+
+        code = f"{random.randint(0, 999999):06d}"
+        PhoneVerification.objects.create(
+            phone=target, code=code, chat_id=sub.chat_id
+        )
+        try:
+            tg.send_text(sub.chat_id, tg.CODE_TEXT.format(code=code))
+        except Exception as e:
+            return JsonResponse(
+                {"sent": False, "error": f"Telegramga yuborib bo'lmadi: {e}"},
+                status=502,
+            )
+
+        return JsonResponse({"sent": True, "expires_in": CODE_TTL_MINUTES * 60})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def check_verification_code(request):
+    """Kodni tekshiradi. Body: {phone, code}"""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        from datetime import timedelta
+
+        from .models import PhoneVerification
+
+        data = json.loads(request.body)
+        target = _digits9(data.get("phone") or "")
+        code = (data.get("code") or "").strip()
+        if not target or not code:
+            return JsonResponse({"error": "phone va code majburiy"}, status=400)
+
+        deadline = timezone.now() - timedelta(minutes=CODE_TTL_MINUTES)
+        pv = (
+            PhoneVerification.objects.filter(
+                phone=target, used_at__isnull=True, created_at__gte=deadline
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if not pv:
+            return JsonResponse(
+                {"verified": False, "error": "Kod topilmadi yoki muddati o'tgan"},
+                status=400,
+            )
+        if pv.attempts >= MAX_CODE_ATTEMPTS:
+            return JsonResponse(
+                {"verified": False, "error": "Urinishlar tugadi, yangi kod so'rang"},
+                status=429,
+            )
+
+        pv.attempts += 1
+        if pv.code != code:
+            pv.save(update_fields=["attempts"])
+            qolgan = MAX_CODE_ATTEMPTS - pv.attempts
+            return JsonResponse(
+                {"verified": False, "error": f"Kod noto'g'ri ({qolgan} urinish qoldi)"},
+                status=400,
+            )
+
+        pv.verified_at = timezone.now()
+        pv.save(update_fields=["attempts", "verified_at"])
+        return JsonResponse({"verified": True})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

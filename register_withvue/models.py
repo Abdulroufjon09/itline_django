@@ -572,6 +572,26 @@ class TelegramSubscriber(models.Model):
         return f"{self.tg_name or self.chat_id} → {self.student or 'ulanmagan'}"
 
 
+class PhoneVerification(models.Model):
+    """Student qo'shishda telefon raqamni bot orqali tasdiqlash kodi."""
+
+    phone = models.CharField(max_length=20, db_index=True, verbose_name="Telefon")
+    code = models.CharField(max_length=6, verbose_name="Kod")
+    chat_id = models.BigIntegerField(null=True, blank=True)
+    attempts = models.IntegerField(default=0, verbose_name="Urinishlar")
+    verified_at = models.DateTimeField(null=True, blank=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Telefon tasdiqlash"
+        verbose_name_plural = "Telefon tasdiqlashlar"
+
+    def __str__(self):
+        return f"{self.phone} — {self.code}"
+
+
 class SentMessage(models.Model):
     KIND_CHOICES = [
         ("single", "Bitta o'quvchi"),

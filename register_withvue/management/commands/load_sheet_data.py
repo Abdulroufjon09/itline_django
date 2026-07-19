@@ -17,6 +17,7 @@ import json
 import re
 from pathlib import Path
 
+from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -25,23 +26,53 @@ from register_withvue.models import (
     Teacher, Course, Group, Student, Payment, Lead, AdChannel,
 )
 
+
+def fmt_phone(raw):
+    """9 xonali raqamni '90 123 45 67' ko'rinishiga keltiradi."""
+    d = re.sub(r"\D", "", str(raw or ""))
+    if len(d) == 12 and d.startswith("998"):
+        d = d[3:]
+    if len(d) != 9:
+        return ""
+    return f"{d[:2]} {d[2:5]} {d[5:7]} {d[7:]}"
+
 DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "sheet_data.json"
 SOURCE = "sheet"
 
-# Varaq nomidan o'qituvchi nomi
+# Barcha o'qituvchilar uchun boshlang'ich parol
+DEFAULT_TEACHER_PASSWORD = "excel2024"
+
+# Varaq nomidan o'qituvchi: (haqiqiy ism, telefon)
+# Varaq nomi qo'shma bo'lsa (masalan "HusAbdulloh" = Husniddin + Abdulloh),
+# guruhlar birinchi ustozga biriktiriladi, ikkinchisi EXTRA_TEACHERS'da
+# alohida akkaunt sifatida yaratiladi — keyin admin panelidan guruhlar
+# to'g'ri ustozga o'tkaziladi.
 TEACHER_NAMES = {
-    "husabdulloh": "HusAbdulloh",
-    "ibrosam": "Ibrohim / Samandar",
-    "valijon": "Valijon",
-    "yoqutxon": "Yoqutxon",
-    "xasan": "Xasan",
-    "aziz": "Aziz",
-    "abdulaziz-bahtiyor": "Abdulaziz / Bahtiyor",
-    "xusmer": "Xusmer",
+    "husabdulloh": ("Toshtemirov Husniddin", "937055566"),
+    "ibrosam": ("Samandar", "911398179"),
+    "valijon": ("Valijon", ""),
+    "yoqutxon": ("Yoqutxon", ""),
+    "xasan": ("Hasanjon", "900669931"),
+    "aziz": ("Azizxon", "908611151"),
+    "abdulaziz-bahtiyor": ("Bahtiyorjon", "902939977"),
+    "xusmer": ("Azizbek Khusanboev", "900560233"),
 }
 
+# Guruhi yo'q (yoki qo'shma nomdagi ikkinchi) ustozlar — o'z akkaunti bilan
+EXTRA_TEACHERS = [
+    ("Odilov Abdulloh", "332558585"),
+    ("Davlatov Merojiddin", "900560720"),
+    ("Iqbolmirzo", "942224648"),
+    # ⚠️ Abdulaziz uchun ikki xil raqam berilgan (908064262 / 908064246) —
+    # birinchisi qo'yildi, admin panelidan tekshirib o'zgartirish mumkin
+    ("Abdulaziz", "908064262"),
+    # ⚠️ Ibrohimjon raqami 8 xonali kelgan (91858990) — to'liq emas,
+    # admin panelidan kiritilishi kerak
+    ("Ibrohimjon", ""),
+]
+
 # Import versiyasi — mapping o'zgarsa oshiriladi, server qayta import qiladi
-DATA_VERSION = "4"
+DATA_VERSION = "5"
 
 # Guruh kodidan kurs: (regex, to'liq nom, qisqa nom)
 # Tartib muhim: FR "DASTURLASH FR 18" kabi holatlarda DASTURLASHdan ustun
@@ -264,6 +295,11 @@ class Command(BaseCommand):
                 elif cat == "ads":
                     self._import_ads(tab, stats)
 
+            # Guruhi yo'q ustozlar ham o'z akkauntiga ega bo'lsin
+            for name, phone in EXTRA_TEACHERS:
+                self._create_teacher(name, phone)
+                stats["teachers"] += 1
+
             # Kurs oylik narxi — eng ko'p uchraydigan to'lov summasi
             from collections import Counter
 
@@ -305,13 +341,28 @@ class Command(BaseCommand):
                 self.used_student_phones.add(cand)
                 return cand
 
-    def _uniq_teacher_phone(self):
+    def _uniq_teacher_phone(self, primary=""):
+        """Haqiqiy raqam bo'lsa o'shani, bo'lmasa vaqtinchalik kod beradi."""
+        if primary:
+            pretty = fmt_phone(primary)
+            if pretty not in self.used_teacher_phones:
+                self.used_teacher_phones.add(pretty)
+                return pretty
         while True:
             self._syn += 1
             cand = f"t{self._syn:04d}"
             if cand not in self.used_teacher_phones:
                 self.used_teacher_phones.add(cand)
                 return cand
+
+    def _create_teacher(self, name, phone=""):
+        """O'qituvchi yaratadi — parol har doim excel2024."""
+        return Teacher.objects.create(
+            name=name,
+            phone=self._uniq_teacher_phone(phone),
+            password=make_password(DEFAULT_TEACHER_PASSWORD),
+            source=SOURCE,
+        )
 
     # ── GURUH varag'i ──
     # Har bir varaqda bir nechta guruh bo'ladi. Har bir sarlavha qatori
@@ -321,10 +372,8 @@ class Command(BaseCommand):
         rows = tab["rows"]
         slug = tab["slug"]
 
-        teacher_name = TEACHER_NAMES.get(slug, tab["title"])
-        teacher = Teacher.objects.create(
-            name=teacher_name, phone=self._uniq_teacher_phone(), source=SOURCE
-        )
+        teacher_name, teacher_phone = TEACHER_NAMES.get(slug, (tab["title"], ""))
+        teacher = self._create_teacher(teacher_name, teacher_phone)
         stats["teachers"] += 1
 
         current = None  # {"group","schedule","month_cols"}

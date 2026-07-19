@@ -32,6 +32,16 @@ NOT_FOUND_TEXT = (
     "Iltimos, o'quv markazida ro'yxatdan o'tgan raqamingizni yuboring "
     "yoki administratorga murojaat qiling."
 )
+PENDING_TEXT = (
+    "✅ Raqamingiz qabul qilindi!\n\n"
+    "Siz hali bazada yo'qsiz. Administrator sizni ro'yxatga qo'shayotganda "
+    "shu yerga tasdiqlash kodi keladi — kodni administratorga ayting."
+)
+CODE_TEXT = (
+    "🔐 Ro'yxatdan o'tish kodi: {code}\n\n"
+    "Bu kodni administratorga ayting. Kod 10 daqiqa amal qiladi.\n"
+    "Agar siz ro'yxatdan o'tishni so'ramagan bo'lsangiz, e'tiborsiz qoldiring."
+)
 
 
 def tg_call(method, payload, timeout=15):
@@ -112,22 +122,28 @@ def handle_update(update):
 
         if phone:
             student = find_student_by_phone(phone)
+            # Bazada yo'q bo'lsa ham saqlaymiz — yangi o'quvchi qo'shilganda
+            # tasdiqlash kodi shu chat'ga yuboriladi va avtomatik bog'lanadi
+            TelegramSubscriber.objects.update_or_create(
+                chat_id=chat_id,
+                defaults={
+                    "student": student,
+                    "phone": last9(phone),
+                    "tg_name": tg_name[:200],
+                },
+            )
             if student:
-                TelegramSubscriber.objects.update_or_create(
-                    chat_id=chat_id,
-                    defaults={
-                        "student": student,
-                        "phone": last9(phone),
-                        "tg_name": tg_name[:200],
-                    },
-                )
                 send_text(
                     chat_id,
                     LINKED_TEXT.format(name=f"{student.name} {student.surname}".strip()),
                     reply_markup={"remove_keyboard": True},
                 )
             else:
-                send_text(chat_id, NOT_FOUND_TEXT)
+                send_text(
+                    chat_id,
+                    PENDING_TEXT,
+                    reply_markup={"remove_keyboard": True},
+                )
             return
 
         # boshqa har qanday xabar

@@ -143,3 +143,12 @@ class SentMessageAdmin(admin.ModelAdmin):
     list_display = ("id", "student", "kind", "status", "error", "created_at")
     list_filter = ("kind", "status")
     search_fields = ("student__name", "text")
+
+
+from .models import PhoneVerification
+
+
+@admin.register(PhoneVerification)
+class PhoneVerificationAdmin(admin.ModelAdmin):
+    list_display = ("id", "phone", "code", "attempts", "verified_at", "used_at", "created_at")
+    search_fields = ("phone",)

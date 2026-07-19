@@ -148,6 +148,11 @@ urlpatterns = [
     path("messages/send-group/", views.send_message_group),
     path("messages/send-all/", views.send_message_all),
     path("messages/history/", views.get_message_history),
+    # ───────────────────────────────
+    # TELEFON TASDIQLASH (bot orqali kod)
+    # ───────────────────────────────
+    path("verify/send-code/", views.send_verification_code),
+    path("verify/check-code/", views.check_verification_code),
     path("expenses/", views.get_expenses),
     path("expenses/create/", views.create_expense),
     path("expenses/<int:expense_id>/update/", views.update_expense),
