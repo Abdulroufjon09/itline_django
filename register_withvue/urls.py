@@ -151,6 +151,8 @@ urlpatterns = [
     # ───────────────────────────────
     # TELEFON TASDIQLASH (bot orqali kod)
     # ───────────────────────────────
+    path("change-password/", views.change_password),
+    path("profile/update/", views.update_profile),
     path("verify/send-code/", views.send_verification_code),
     path("verify/check-code/", views.check_verification_code),
     path("expenses/", views.get_expenses),

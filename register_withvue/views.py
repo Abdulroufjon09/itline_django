@@ -630,9 +630,11 @@ def reassign_students(request):
         if not Teacher.objects.filter(id=to_teacher_id).exists():
             return JsonResponse({"error": "Yangi o'qituvchi topilmadi"}, status=404)
 
-        updated = Student.objects.filter(teacher_id=from_teacher_id).update(
-            teacher_id=to_teacher_id
-        )
+        # Faqat o'quvchilar ko'chadi — ustozning o'z admin/menejer profili
+        # eski ustozga bog'langan holicha qoladi
+        updated = Student.objects.filter(
+            teacher_id=from_teacher_id, is_admin=False, is_excellence=False
+        ).update(teacher_id=to_teacher_id)
         return JsonResponse(
             {"message": f"{updated} ta o'quvchi o'tkazildi!", "count": updated}
         )
@@ -3501,5 +3503,160 @@ def check_verification_code(request):
         pv.verified_at = timezone.now()
         pv.save(update_fields=["attempts", "verified_at"])
         return JsonResponse({"verified": True})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+# ─────────────────────────────
+# PAROL O'ZGARTIRISH
+# ─────────────────────────────
+
+MIN_PASSWORD_LEN = 6
+
+
+def _password_matches(obj, password):
+    """Yozuvning paroli mos keladimi (parol o'rnatilmagan bo'lsa ism-familiya)."""
+    if getattr(obj, "password", ""):
+        return check_password(password, obj.password)
+    return _name_password_matches(obj, password)
+
+
+@csrf_exempt
+def change_password(request):
+    """Parolni o'zgartiradi. Body: {phone, old_password, new_password}
+
+    Ustoz/adminda ikkita yozuv bor (Teacher + Student.is_admin) — ikkalasi
+    ham yangilanadi, aks holda login qaysi yozuvga tushishiga qarab eski
+    yoki yangi parol talab qilinardi.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        phone = (data.get("phone") or "").strip()
+        old = data.get("old_password") or ""
+        new = (data.get("new_password") or "").strip()
+
+        if not phone or not old or not new:
+            return JsonResponse(
+                {"error": "phone, old_password va new_password majburiy"},
+                status=400,
+            )
+        if len(new) < MIN_PASSWORD_LEN:
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Yangi parol kamida {MIN_PASSWORD_LEN} ta belgidan "
+                        "iborat bo'lishi kerak"
+                    )
+                },
+                status=400,
+            )
+        if new in (ADMIN_PASSWORD, EXCELLENCE_PASSWORD):
+            return JsonResponse(
+                {"error": "Bu parolni tanlab bo'lmaydi — u tizim uchun band"},
+                status=400,
+            )
+
+        # Eski parolga mos keladigan yozuvni topamiz
+        matched_student = None
+        for cand in _find_students_by_any_phone(phone):
+            if _password_matches(cand, old):
+                matched_student = cand
+                break
+
+        teacher = _find_teacher_by_any_phone(phone)
+        matched_teacher = (
+            teacher if teacher and _password_matches(teacher, old) else None
+        )
+
+        if not matched_student and not matched_teacher:
+            return JsonResponse(
+                {"error": "Telefon yoki joriy parol noto'g'ri"}, status=401
+            )
+
+        hashed = make_password(new)
+        if matched_student:
+            matched_student.password = hashed
+            matched_student.save(update_fields=["password"])
+            # Admin/menejer bo'lsa bog'langan Teacher yozuvi ham yangilanadi
+            if matched_student.teacher_id:
+                Teacher.objects.filter(id=matched_student.teacher_id).update(
+                    password=hashed
+                )
+        if matched_teacher:
+            matched_teacher.password = hashed
+            matched_teacher.save(update_fields=["password"])
+            # Teacher'ga bog'langan admin profillari ham
+            Student.objects.filter(
+                teacher_id=matched_teacher.id, is_admin=True
+            ).update(password=hashed)
+
+        return JsonResponse({"message": "Parol muvaffaqiyatli o'zgartirildi"})
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def update_profile(request):
+    """Profil ma'lumotlarini yangilaydi. Body: {phone, name, surname}
+
+    Ustoz/adminda ikkita yozuv bor (Teacher + Student.is_admin) — ikkalasida
+    ham ism birga yangilanadi.
+    """
+    if request.method not in ("POST", "PATCH"):
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        phone = (data.get("phone") or "").strip()
+        name = (data.get("name") or "").strip()
+        surname = (data.get("surname") or "").strip()
+
+        if not phone:
+            return JsonResponse({"error": "phone majburiy"}, status=400)
+        if not name:
+            return JsonResponse({"error": "Ism bo'sh bo'lishi mumkin emas"}, status=400)
+
+        students = _find_students_by_any_phone(phone)
+        teacher = _find_teacher_by_any_phone(phone)
+        if not students and not teacher:
+            return JsonResponse({"error": "Foydalanuvchi topilmadi"}, status=404)
+
+        # Bitta raqamda bir nechta o'quvchi bo'lishi mumkin (aka-uka) —
+        # faqat so'rov yuborgan profilni yangilaymiz
+        student = None
+        user_id = data.get("id")
+        if user_id:
+            student = next((s for s in students if s.id == int(user_id)), None)
+        if student is None:
+            student = next((s for s in students if s.is_admin or s.is_excellence), None)
+        if student is None and students:
+            student = students[0]
+
+        full_name = f"{name} {surname}".strip()
+
+        if student:
+            student.name = name[:100]
+            student.surname = surname[:100]
+            student.save(update_fields=["name", "surname"])
+            if student.teacher_id:
+                Teacher.objects.filter(id=student.teacher_id).update(
+                    name=full_name[:100]
+                )
+        elif teacher:
+            teacher.name = full_name[:100]
+            teacher.save(update_fields=["name"])
+
+        return JsonResponse(
+            {
+                "message": "Profil yangilandi",
+                "name": name,
+                "surname": surname,
+            }
+        )
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
