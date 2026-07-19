@@ -781,21 +781,27 @@ def _digits9(phone):
     return d[-9:] if len(d) >= 9 else ""
 
 
-def _find_student_by_any_phone(phone):
-    """Studentni telefon bo'yicha topadi — format farqiga qaramasdan.
+def _find_students_by_any_phone(phone):
+    """Telefon bo'yicha barcha mos studentlarni qaytaradi.
 
-    '+998903068558' ham, '90 306 85 58' ham bir xil studentga olib keladi.
+    Format farqi hisobga olinmaydi ('+998903068558' == '90 306 85 58').
+    Bir nechta bo'lishi normal — aka-uka bir xil ota-ona raqamini
+    ishlatsa, ular parol (ism-familiya) bo'yicha ajratiladi.
     """
-    exact = Student.objects.select_related("teacher").filter(phone=phone).first()
-    if exact:
-        return exact
     target = _digits9(phone)
     if not target:
-        return None
-    for s in Student.objects.select_related("teacher").all():
-        if _digits9(s.phone) == target or _digits9(s.phone2) == target:
-            return s
-    return None
+        return list(Student.objects.select_related("teacher").filter(phone=phone))
+    return [
+        s
+        for s in Student.objects.select_related("teacher").all()
+        if _digits9(s.phone) == target or _digits9(s.phone2) == target
+    ]
+
+
+def _find_student_by_any_phone(phone):
+    """Telefon bo'yicha bitta student (mavjudligini tekshirish uchun)."""
+    matches = _find_students_by_any_phone(phone)
+    return matches[0] if matches else None
 
 
 def _find_teacher_by_any_phone(phone):
@@ -968,21 +974,23 @@ def login_student(request):
                 {"error": "Telefon raqam kiritilishi shart"}, status=400
             )
 
-        student = _find_student_by_any_phone(phone)
+        candidates = _find_students_by_any_phone(phone)
 
         if password is None:
-            return JsonResponse({"exists": bool(student)})
+            return JsonResponse({"exists": bool(candidates)})
 
-        password_ok = False
-        if student:
-            if student.password:
-                password_ok = check_password(password, student.password)
-            if not password_ok:
-                # Parol o'rnatilmagan (importdan kelgan) studentlar uchun
-                # parol — ism va familiya
-                password_ok = not student.password and _name_password_matches(
-                    student, password
-                )
+        # Bir xil raqamli bir nechta o'quvchi bo'lishi mumkin (aka-uka) —
+        # parolga mos kelganini tanlaymiz
+        student, password_ok = None, False
+        for cand in candidates:
+            if cand.password and check_password(password, cand.password):
+                student, password_ok = cand, True
+                break
+            # Parol o'rnatilmagan (importdan kelgan) o'quvchilar uchun
+            # parol — ism va familiya
+            if not cand.password and _name_password_matches(cand, password):
+                student, password_ok = cand, True
+                break
 
         if student and password_ok:
             return JsonResponse(
@@ -1852,6 +1860,12 @@ def update_group(request, group_id):
             schedule = data["schedule"].strip()
             if schedule in ["odd", "even"]:
                 group.schedule = schedule
+
+        # Menejer guruhni tahrirlab saqladi — import qo'ygan "tekshirish kerak"
+        # belgisi endi keraksiz
+        if group.needs_review and ("lesson_time" in data or "schedule" in data):
+            group.needs_review = False
+            group.review_note = ""
 
         group.save()
 

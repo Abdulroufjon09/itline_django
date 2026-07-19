@@ -287,6 +287,15 @@ class Group(models.Model):
     )
     source = models.CharField(max_length=30, blank=True, default="")
 
+    # Import vaqtida jadval sarlavhasida dars kuni yoki soati ko'rsatilmagan
+    # bo'lsa true — qiymat taxminiy, menejer tekshirib qo'yishi kerak
+    needs_review = models.BooleanField(
+        default=False, verbose_name="Tekshirish kerak"
+    )
+    review_note = models.CharField(
+        max_length=200, blank=True, verbose_name="Nima aniq emas"
+    )
+
     class Meta:
         verbose_name = "Guruh"
         verbose_name_plural = "Guruhlar"

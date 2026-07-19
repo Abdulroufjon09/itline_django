@@ -164,12 +164,27 @@ def _personalize(text, student, month=""):
 
 def send_to_students(students, text, kind, month=""):
     """O'quvchilar ro'yxatiga xabar yuboradi. Natija: (sent, failed, no_chat)."""
-    subs = TelegramSubscriber.objects.filter(student__in=students).select_related(
-        "student"
-    )
+    students = list(students)
+    subs = TelegramSubscriber.objects.filter(student__in=students)
     subs_by_student = {}
     for sub in subs:
         subs_by_student.setdefault(sub.student_id, []).append(sub)
+
+    # Telefon bo'yicha ham qidiramiz: aka-uka bir xil ota-ona raqamini
+    # ishlatganda ikkinchisining chat'i student'ga bog'lanmagan bo'ladi —
+    # xabar baribir o'sha chat'ga yetib borishi kerak
+    need_phone_lookup = [s for s in students if s.id not in subs_by_student]
+    if need_phone_lookup:
+        wanted = {}
+        for s in need_phone_lookup:
+            for p in (s.phone, s.phone2):
+                key = last9(p)
+                if key:
+                    wanted.setdefault(key, []).append(s.id)
+        if wanted:
+            for sub in TelegramSubscriber.objects.filter(phone__in=wanted.keys()):
+                for sid in wanted.get(sub.phone, []):
+                    subs_by_student.setdefault(sid, []).append(sub)
 
     sent = failed = no_chat = 0
     logs = []

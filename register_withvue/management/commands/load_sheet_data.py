@@ -63,16 +63,16 @@ EXTRA_TEACHERS = [
     ("Odilov Abdulloh", "332558585"),
     ("Davlatov Merojiddin", "900560720"),
     ("Iqbolmirzo", "942224648"),
-    # ⚠️ Abdulaziz uchun ikki xil raqam berilgan (908064262 / 908064246) —
-    # birinchisi qo'yildi, admin panelidan tekshirib o'zgartirish mumkin
-    ("Abdulaziz", "908064262"),
+    # Abdulaziz ismli ikki ustoz bor — ikkalasi ham alohida akkaunt
+    ("Abdulaziz (1)", "908064262"),
+    ("Abdulaziz (2)", "908064246"),
     # ⚠️ Ibrohimjon raqami 8 xonali kelgan (91858990) — to'liq emas,
     # admin panelidan kiritilishi kerak
     ("Ibrohimjon", ""),
 ]
 
 # Import versiyasi — mapping o'zgarsa oshiriladi, server qayta import qiladi
-DATA_VERSION = "5"
+DATA_VERSION = "8"
 
 # Guruh kodidan kurs: (regex, to'liq nom, qisqa nom)
 # Tartib muhim: FR "DASTURLASH FR 18" kabi holatlarda DASTURLASHdan ustun
@@ -227,9 +227,18 @@ def split_name(full):
 # Ism emasligini bildiruvchi kalit so'zlar (jadval/izoh qoldiqlari)
 _NON_NAME_KW = re.compile(
     r"dasturlash|guru[hx]|komp[iy]|kampiy|s\s*,\s*p\s*,\s*s|d\s*,\s*ch\s*,\s*j|"
-    r"febral|yuksalish",
+    r"febral|yuksalish|tugash\s*sanasi|tugadi|kurs\s*narxi|smen|"
+    r"darajani\s*belgilash",
     re.I,
 )
+
+# Ism katagiga qo'shilib ketgan qo'shimcha ma'lumotlar
+_BIRTH_YEAR_RE = re.compile(r"\b(19[89]\d|20[0-2]\d)\b")
+_SOURCE_RE = re.compile(
+    r"\bfrom\s+[\w'’\s]+|\b(instagram|telegram|banner|alfa|tv|friends?|reklama)\b",
+    re.I,
+)
+_DISCOUNT_RE = re.compile(r"\b\d{1,2}\s*%")
 
 
 def valid_person_name(s):
@@ -245,7 +254,47 @@ def valid_person_name(s):
         return False  # 3 tadan kam harf
     if _NON_NAME_KW.search(s):
         return False
+    # Unli harfsiz "so'z"lar — 'GT,KLO099' kabi kodlar
+    letters = re.sub(r"[^A-Za-z']", "", s).lower()
+    if letters and not re.search(r"[aeiouyўо]", letters):
+        return False
     return True
+
+
+def clean_person_name(raw):
+    """Ism katagidan tug'ilgan yil, manba va chegirma belgilarini ajratadi.
+
+    'Murodov Abubakr 2009'            → ('Murodov Abubakr', ['2009-yil'])
+    'Otabek Musayev 2008 from banner' → ('Otabek Musayev', ['2008-yil', 'from banner'])
+    Telefon/summalar ham ajratiladi — ular alohida maydonlarga tushadi.
+    """
+    s = str(raw).strip()
+    extras = []
+
+    year = _BIRTH_YEAR_RE.search(s)
+    if year:
+        extras.append(f"{year.group(1)}-yil")
+        s = _BIRTH_YEAR_RE.sub(" ", s)
+
+    src = _SOURCE_RE.search(s)
+    if src:
+        extras.append(src.group(0).strip())
+        s = _SOURCE_RE.sub(" ", s)
+
+    disc = _DISCOUNT_RE.search(s)
+    if disc:
+        extras.append(f"chegirma {disc.group(0).strip()}")
+        s = _DISCOUNT_RE.sub(" ", s)
+
+    # Raqam aralashgan har qanday qoldiq bo'lak ismga kirmaydi
+    # ('2008vfrom', 'GT,KLO099' kabi jadval qoldiqlari)
+    kept, dropped = [], []
+    for token in s.split():
+        (dropped if re.search(r"\d", token) else kept).append(token)
+    if dropped:
+        extras.append(" ".join(dropped))
+    s = re.sub(r"\s+", " ", " ".join(kept)).strip(" ,.-")
+    return s, extras
 
 
 class Command(BaseCommand):
@@ -331,6 +380,10 @@ class Command(BaseCommand):
 
     # ── Unikal telefon generatori ──
     def _uniq_student_phone(self, primary):
+        """Student.phone unikal bo'lishi shart. Raqam band bo'lsa (masalan
+        aka-uka bir xil ota-ona raqamini ishlatsa) vaqtinchalik kod qaytaradi —
+        haqiqiy raqam chaqiruvchi tomonidan phone2 ga yoziladi, shunda
+        bot va xabarlar baribir ishlaydi."""
         if primary and primary not in self.used_student_phones:
             self.used_student_phones.add(primary)
             return primary
@@ -400,7 +453,18 @@ class Command(BaseCommand):
 
             num = parse_group_number(header_text)
             gname = f"{short} #{num}" if num else f"{short} — {teacher_name}"
-            schedule = parse_schedule(header_text) or "odd"
+
+            # Sarlavhada kun/soat bo'lmasa taxminiy qiymat qo'yiladi, lekin
+            # buni yashirmaymiz — menejer tekshirishi uchun belgilab qo'yamiz
+            parsed_schedule = parse_schedule(header_text)
+            has_time = re.search(r"\d{1,2}[:;]\d{2}|\b\d{4}\b", str(header_text))
+            missing = []
+            if parsed_schedule is None:
+                missing.append("dars kunlari")
+            if not has_time:
+                missing.append("dars vaqti")
+
+            schedule = parsed_schedule or "odd"
             lesson_time = parse_time(header_text)
 
             # Ayni o'qituvchida bir xil nomli guruh takror kelsa — qayta ishlatamiz
@@ -412,6 +476,12 @@ class Command(BaseCommand):
                     "lesson_time": lesson_time,
                     "schedule": schedule,
                     "course": course,
+                    "needs_review": bool(missing),
+                    "review_note": (
+                        "Jadvalda ko'rsatilmagan: " + ", ".join(missing)
+                    )[:200]
+                    if missing
+                    else "",
                 },
             )
             if g_created:
@@ -469,17 +539,37 @@ class Command(BaseCommand):
                 continue
             notes.append(c)
 
-        name, surname = split_name(name_raw)
-        note_text = " · ".join(notes)
+        # Ism katagida tug'ilgan yil / manba / telefon aralashib ketgan bo'lishi
+        # mumkin — ajratib, izohga ko'chiramiz
+        clean_name, name_extras = clean_person_name(name_raw)
+        # Tozalangandan keyin ism qolmasa — bu odam emas, jadval qoldig'i
+        if len(clean_name.replace(" ", "")) < 3:
+            return
+        # Ism katagining o'zida telefon bo'lsa, uni ham hisobga olamiz
+        inline_phone = extract_phone(name_raw)
+        if inline_phone and inline_phone not in phones:
+            phones.insert(0, inline_phone)
+
+        name, surname = split_name(clean_name)
+        note_text = " · ".join(notes + name_extras)
         is_grad = (
             "BITIRUVCHI" in name_raw.upper() or "BITIRUVCHI" in note_text.upper()
         )
 
+        primary = phones[0] if phones else ""
+        stored_phone = self._uniq_student_phone(primary)
+        extra = phones[1] if len(phones) > 1 else ""
+        # Raqam band bo'lgani uchun sintetik kod berilgan bo'lsa, haqiqiy
+        # raqamni yo'qotmaymiz — phone2 ga yozamiz (bot va xabarlar shu
+        # orqali topadi, aks holda aka-uka'ning biri tizimdan tushib qolardi)
+        if primary and stored_phone != primary:
+            extra = primary
+
         student = Student.objects.create(
             name=name[:100],
             surname=surname[:100],
-            phone=self._uniq_student_phone(phones[0] if phones else ""),
-            phone2=(phones[1] if len(phones) > 1 else "")[:50],
+            phone=stored_phone,
+            phone2=extra[:50],
             teacher=teacher,
             schedule=schedule,
             note=note_text,
@@ -577,14 +667,22 @@ class Command(BaseCommand):
                     phones.append(ph)
                     continue
                 notes.append(c)
-            name, surname = split_name(first)
+            clean_name, name_extras = clean_person_name(first)
+            if len(clean_name.replace(" ", "")) < 3:
+                continue
+            name, surname = split_name(clean_name)
+            primary = phones[0] if phones else ""
+            stored_phone = self._uniq_student_phone(primary)
+            extra = phones[1] if len(phones) > 1 else ""
+            if primary and stored_phone != primary:
+                extra = primary
             Student.objects.create(
                 name=name[:100],
                 surname=surname[:100],
-                phone=self._uniq_student_phone(phones[0] if phones else ""),
-                phone2=(phones[1] if len(phones) > 1 else "")[:50],
+                phone=stored_phone,
+                phone2=extra[:50],
                 is_graduate=True,
-                note=" · ".join(notes),
+                note=" · ".join(notes + name_extras),
                 source=SOURCE,
             )
             stats["graduates"] += 1
