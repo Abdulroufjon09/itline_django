@@ -11,9 +11,24 @@ from rest_framework import serializers
 
 
 from .models import (
-    Group, Student, Teacher, Lesson, Attendance, Payment, StagePrice,
-    StudentPenalty, Manager, CoinTransaction, Product, Order,
-    AttendanceCoinSettings, Course, News, Expense, Lead, AdChannel,
+    Group,
+    Student,
+    Teacher,
+    Lesson,
+    Attendance,
+    Payment,
+    StagePrice,
+    StudentPenalty,
+    Manager,
+    CoinTransaction,
+    Product,
+    Order,
+    AttendanceCoinSettings,
+    Course,
+    News,
+    Expense,
+    Lead,
+    AdChannel,
 )
 
 from django.utils import timezone
@@ -558,6 +573,7 @@ def update_teacher(request, teacher_id):
 
         if "name" in data:
             teacher.name = data["name"].strip()
+
         if "phone" in data:
             new_phone = data["phone"].strip()
             if Teacher.objects.filter(phone=new_phone).exclude(id=teacher_id).exists():
@@ -565,6 +581,16 @@ def update_teacher(request, teacher_id):
                     {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
                 )
             teacher.phone = new_phone
+
+            # ✅ MUHIM: Bog'langan Student.is_admin/is_excellence yozuvini ham yangilash
+            Student.objects.filter(teacher_id=teacher_id, is_admin=True).update(
+                phone=new_phone
+            )
+
+            Student.objects.filter(teacher_id=teacher_id, is_excellence=True).update(
+                phone=new_phone
+            )
+
         if "is_senior" in data:
             teacher.is_senior = data["is_senior"]
         if "penalty_limit" in data:
@@ -574,6 +600,7 @@ def update_teacher(request, teacher_id):
                 return JsonResponse(
                     {"error": "penalty_limit son bo'lishi kerak"}, status=400
                 )
+
         teacher.save()
         return JsonResponse({"message": "O'qituvchi yangilandi!"})
     except json.JSONDecodeError:
@@ -826,6 +853,7 @@ def _name_password_matches(student, password):
     Katta-kichik harf, bo'shliq va ' belgilar farq qilmaydi:
     'Abdulloh Ibrohimov', 'abdullohibrohimov' — ikkalasi ham to'g'ri.
     """
+
     def norm(s):
         return "".join(ch for ch in str(s).lower() if ch.isalnum())
 
@@ -2824,6 +2852,7 @@ def delete_news(request, news_id):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
+
 # ─────────────────────────────
 # EXPENSES (XARAJATLAR)
 # ─────────────────────────────
@@ -2879,7 +2908,9 @@ def create_expense(request):
             return JsonResponse({"error": "amount son bo'lishi kerak"}, status=400)
 
         if amount <= 0:
-            return JsonResponse({"error": "amount 0 dan katta bo'lishi kerak"}, status=400)
+            return JsonResponse(
+                {"error": "amount 0 dan katta bo'lishi kerak"}, status=400
+            )
 
         category = data.get("category", "other")
         if category not in dict(Expense.CATEGORY_CHOICES):
@@ -3020,9 +3051,7 @@ def get_finance_summary(request):
 
         stage_prices = {sp.stage: sp.price for sp in StagePrice.objects.all()}
 
-        generated_student_ids = set(
-            month_payments.values_list("student_id", flat=True)
-        )
+        generated_student_ids = set(month_payments.values_list("student_id", flat=True))
 
         # Payment yaratilgan studentlar uchun ularning haqiqiy amount_due qiymati ishlatiladi
         expected_from_generated = (
@@ -3096,9 +3125,7 @@ def get_finance_summary(request):
         unpaid_count = generated_count - paid_count
         not_generated_count = total_students - generated_count
 
-        expected_total = (
-            month_payments.aggregate(total=Sum("amount_due"))["total"] or 0
-        )
+        expected_total = month_payments.aggregate(total=Sum("amount_due"))["total"] or 0
         collected_total = (
             month_payments.aggregate(total=Sum("paid_amount"))["total"] or 0
         )
@@ -3129,6 +3156,7 @@ def get_finance_summary(request):
         )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
 
 # ─────────────────────────────
 # LEADS (Potensial mijozlar)
@@ -3184,9 +3212,11 @@ def get_ad_channels(request):
 def get_graduates(request):
     """Bitiruvchilar (is_graduate=True) ro'yxati."""
     try:
-        qs = Student.objects.select_related("teacher").filter(
-            is_graduate=True
-        ).order_by("name")
+        qs = (
+            Student.objects.select_related("teacher")
+            .filter(is_graduate=True)
+            .order_by("name")
+        )
         data = [
             {
                 "id": s.id,
@@ -3237,9 +3267,7 @@ def tg_status(request):
             .values_list("student_id", flat=True)
             .distinct()
         )
-        return JsonResponse(
-            {"count": len(student_ids), "student_ids": student_ids}
-        )
+        return JsonResponse({"count": len(student_ids), "student_ids": student_ids})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -3279,9 +3307,7 @@ def send_message_student(request):
         student_id = data.get("student_id")
         text = (data.get("text") or "").strip()
         if not student_id or not text:
-            return JsonResponse(
-                {"error": "student_id va text majburiy"}, status=400
-            )
+            return JsonResponse({"error": "student_id va text majburiy"}, status=400)
         student = Student.objects.filter(id=student_id).first()
         if not student:
             return JsonResponse({"error": "O'quvchi topilmadi"}, status=404)
@@ -3344,9 +3370,7 @@ def get_message_history(request):
             {
                 "id": m.id,
                 "student": (
-                    f"{m.student.name} {m.student.surname}".strip()
-                    if m.student
-                    else ""
+                    f"{m.student.name} {m.student.surname}".strip() if m.student else ""
                 ),
                 "kind": m.kind,
                 "text": m.text[:120],
@@ -3440,9 +3464,7 @@ def send_verification_code(request):
             )
 
         code = f"{random.randint(0, 999999):06d}"
-        PhoneVerification.objects.create(
-            phone=target, code=code, chat_id=sub.chat_id
-        )
+        PhoneVerification.objects.create(phone=target, code=code, chat_id=sub.chat_id)
         try:
             tg.send_text(sub.chat_id, tg.CODE_TEXT.format(code=code))
         except Exception as e:
@@ -3588,9 +3610,9 @@ def change_password(request):
             matched_teacher.password = hashed
             matched_teacher.save(update_fields=["password"])
             # Teacher'ga bog'langan admin profillari ham
-            Student.objects.filter(
-                teacher_id=matched_teacher.id, is_admin=True
-            ).update(password=hashed)
+            Student.objects.filter(teacher_id=matched_teacher.id, is_admin=True).update(
+                password=hashed
+            )
 
         return JsonResponse({"message": "Parol muvaffaqiyatli o'zgartirildi"})
     except json.JSONDecodeError:
