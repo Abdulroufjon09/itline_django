@@ -551,6 +551,10 @@ class SheetImportMeta(models.Model):
 
     version = models.CharField(max_length=20, default="")
     imported_at = models.DateTimeField(auto_now=True)
+    # Import server ko'tarilganda fon oqimida ishlaydi — u yerdagi xato
+    # faqat logga tushib, tashqaridan ko'rinmay qolardi. Endi shu yerda
+    # saqlanadi va /api/sheet-import-status/ orqali ko'rsa bo'ladi.
+    last_error = models.TextField(blank=True, verbose_name="Oxirgi xato")
 
     class Meta:
         verbose_name = "Sheet import holati"

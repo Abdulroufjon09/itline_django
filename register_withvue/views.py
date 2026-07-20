@@ -799,6 +799,35 @@ def reassign_students(request):
 # ─────────────────────────────
 
 
+def sheet_import_status(request):
+    """Sheet importi holati — deploy'dan keyin tekshirish uchun.
+
+    Import server ko'tarilganda fon oqimida ishlaydi va atomic; xato
+    bo'lsa hammasi qaytariladi va tashqaridan hech narsa o'zgarmagandek
+    ko'rinadi. Shu sababli xatoning o'zi ham shu yerda ko'rsatiladi.
+    """
+    from .models import SheetImportMeta
+    from .management.commands.load_sheet_data import DATA_VERSION
+
+    meta = SheetImportMeta.objects.filter(pk=1).first()
+    return JsonResponse(
+        {
+            "code_version": DATA_VERSION,
+            "db_version": meta.version if meta else None,
+            "up_to_date": bool(meta and meta.version == DATA_VERSION),
+            "imported_at": meta.imported_at.isoformat() if meta else None,
+            "last_error": (meta.last_error if meta else "") or "",
+            "counts": {
+                "teachers": Teacher.objects.count(),
+                "students": Student.objects.count(),
+                "managers": Manager.objects.count(),
+                "leads": Lead.objects.count(),
+                "groups": Group.objects.count(),
+            },
+        }
+    )
+
+
 def _require_staff(request):
     """Chaqiruvchi menejer yoki ustozmi — shuni tekshiradi.
 

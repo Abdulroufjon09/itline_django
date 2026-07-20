@@ -412,6 +412,11 @@ class Command(BaseCommand):
         Payment.objects.filter(source=SOURCE).delete()
         Student.objects.filter(source=SOURCE).delete()
         Group.objects.filter(source=SOURCE).delete()
+        # Group.course — PROTECT. Menejer qo'lda yaratgan guruh (source="")
+        # sheet kursiga bog'langan bo'lsa, kursni o'chirish ProtectedError
+        # beradi va butun import bekor bo'lardi. Avval bog'lanishni
+        # bo'shatamiz — guruhning o'zi saqlanib qoladi.
+        Group.objects.filter(course__source=SOURCE).update(course=None)
         Course.objects.filter(source=SOURCE).delete()
         Teacher.objects.filter(source=SOURCE).delete()
         Lead.objects.filter(source=SOURCE).delete()
