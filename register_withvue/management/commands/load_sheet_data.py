@@ -28,13 +28,19 @@ from register_withvue.models import (
 
 
 def fmt_phone(raw):
-    """9 xonali raqamni '90 123 45 67' ko'rinishiga keltiradi."""
+    """Ustoz telefonini saqlash ko'rinishiga keltiradi.
+
+    9 xonali → '90 123 45 67'. Jadvalda to'liq kelmagan qisqa raqamlar
+    (masalan Ibrohimjonning 8 xonali '91858990') tashlab yuborilmaydi —
+    raqamlari holicha saqlanadi, shunda ustoz login qila oladi va
+    menejer panelida "raqam to'liq emas" deb belgilanadi.
+    """
     d = re.sub(r"\D", "", str(raw or ""))
-    if len(d) == 12 and d.startswith("998"):
+    if len(d) > 9 and d.startswith("998"):
         d = d[3:]
-    if len(d) != 9:
-        return ""
-    return f"{d[:2]} {d[2:5]} {d[5:7]} {d[7:]}"
+    if len(d) == 9:
+        return f"{d[:2]} {d[2:5]} {d[5:7]} {d[7:]}"
+    return d
 
 DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "sheet_data.json"
 SOURCE = "sheet"
@@ -66,13 +72,22 @@ EXTRA_TEACHERS = [
     # Abdulaziz ismli ikki ustoz bor — ikkalasi ham alohida akkaunt
     ("Abdulaziz (1)", "908064262"),
     ("Abdulaziz (2)", "908064246"),
-    # ⚠️ Ibrohimjon raqami 8 xonali kelgan (91858990) — to'liq emas,
-    # admin panelidan kiritilishi kerak
-    ("Ibrohimjon", ""),
+    # ⚠️ Ibrohimjon raqami 8 xonali kelgan — to'liq emas, lekin baribir
+    # saqlanadi: shu holicha ham login ishlaydi, menejer paneli esa uni
+    # "raqam to'liq emas" deb belgilab turadi
+    ("Ibrohimjon", "91858990"),
+]
+
+# Menejerlar (direktor) — o'chirilmaydi, faqat yo'q bo'lsa yaratiladi
+DEFAULT_MANAGER_PASSWORD = "excel2024"
+DEFAULT_MANAGERS = [
+    # Markazning asosiy raqami — jadvalda ko'plab o'quvchilarning
+    # ota-ona ustunida uchraydi, lekin akkaunt sifatida ro'yxatda yo'q edi
+    ("Direktor", "", "917404000"),
 ]
 
 # Import versiyasi — mapping o'zgarsa oshiriladi, server qayta import qiladi
-DATA_VERSION = "9"
+DATA_VERSION = "10"
 
 # Guruh kodidan kurs: (regex, to'liq nom, qisqa nom)
 # Tartib muhim: FR "DASTURLASH FR 18" kabi holatlarda DASTURLASHdan ustun
@@ -240,6 +255,9 @@ _SOURCE_RE = re.compile(
 )
 _DISCOUNT_RE = re.compile(r"\b\d{1,2}\s*%")
 
+# "... o'g'li / qizi / o'g'illari / qizlari" — uzun, lekin haqiqiy ism
+_PATRONYMIC_RE = re.compile(r"\b[o0]['’`ʻʼ]?g['’`ʻʼ]?(li|illari)\b|\bqiz(i|lari)\b", re.I)
+
 
 def valid_person_name(s):
     """Katak haqiqiy ism-familiyaga o'xshaydimi (jadval/izoh qoldig'i emas)."""
@@ -257,6 +275,12 @@ def valid_person_name(s):
     # Unli harfsiz "so'z"lar — 'GT,KLO099' kabi kodlar
     letters = re.sub(r"[^A-Za-z']", "", s).lower()
     if letters and not re.search(r"[aeiouyўо]", letters):
+        return False
+    # Jadvalga yozib qo'yilgan gaplar ("Akalar endi buyog'iga
+    # birlashilinmasa axvol chatoq bo'ladi sababi") o'quvchi bo'lib
+    # ketmasin. Ism-familiya 5 so'zdan oshmaydi; undan uzunlari faqat
+    # otasining ismi ko'rsatilgan bo'lsa haqiqiy ("X Y Z o'g'li")
+    if len(s.split()) >= 6 and not _PATRONYMIC_RE.search(s):
         return False
     return True
 
@@ -322,6 +346,10 @@ class Command(BaseCommand):
                  "students": 0, "payments": 0, "leads": 0, "ads": 0, "graduates": 0}
 
         with transaction.atomic():
+            # Menejer qo'lda o'tkazgan o'quvchilarni eslab qolamiz —
+            # import ularni o'chirib qayta yaratadi, keyin tiklaymiz
+            manual = self._snapshot_manual_teachers()
+
             self._clear_previous()
 
             # DB'da band bo'lgan telefonlar — MUHIM: eski import
@@ -352,6 +380,13 @@ class Command(BaseCommand):
 
             # Ustozlarning admin profillari (o'quvchilardan keyin)
             self._create_admin_profiles()
+
+            # Menejerlar — import'ga tegishli emas, shuning uchun
+            # o'chirilmaydi va paroli qayta yozilmaydi
+            stats["managers"] = self._ensure_managers()
+
+            # Menejer qo'lda qilgan o'tkazishlarni tiklaymiz
+            stats["restored"] = self._restore_manual_teachers(manual)
 
             # Kurs oylik narxi — eng ko'p uchraydigan to'lov summasi
             from collections import Counter
@@ -431,6 +466,90 @@ class Command(BaseCommand):
         # o'quvchilar o'z raqamlarini birinchi bo'lib egallaydi
         self._pending_admins.append(teacher)
         return teacher
+
+    # ── Qo'lda qilingan ustoz biriktiruvlarini saqlash/tiklash ──
+    #
+    # Import har safar source="sheet" o'quvchilarni o'chirib qayta
+    # yaratadi (id lar ham o'zgaradi), shuning uchun o'quvchini telefoni
+    # bo'yicha, u bo'lmasa ism-familiyasi bo'yicha tanib olamiz.
+    # Ustozlar ham qayta yaratilgani uchun ularni nomi bilan bog'laymiz.
+    @staticmethod
+    def _student_key(s):
+        # Telefon VA ism birgalikda — faqat telefon yetarli emas: aka-uka
+        # yoki bir xil ota-ona raqamini ishlatgan ikki o'quvchi bir xil
+        # kalitga tushib, biri o'rniga ikkalasi ham ko'chib ketardi.
+        # Import paytida berilgan sintetik raqamlar ('—0001') barqaror
+        # emas, shuning uchun ular kalitga kirmaydi.
+        phone = ""
+        for raw in (s.phone, s.phone2):
+            d = re.sub(r"\D", "", str(raw or ""))
+            if len(d) > 9 and d.startswith("998"):
+                d = d[3:]
+            if len(d) >= 7:
+                phone = d[-9:]
+                break
+        name = re.sub(r"[^a-z0-9]", "", f"{s.name}{s.surname}".lower())
+        return f"{phone}|{name}" if (phone or name) else ""
+
+    def _snapshot_manual_teachers(self):
+        snap = {}
+        qs = Student.objects.filter(
+            source=SOURCE, manual_teacher=True, teacher__isnull=False
+        ).select_related("teacher")
+        for s in qs:
+            key = self._student_key(s)
+            if key:
+                snap[key] = s.teacher.name
+        return snap
+
+    def _restore_manual_teachers(self, snap):
+        if not snap:
+            return 0
+        teachers = {t.name: t.id for t in Teacher.objects.all()}
+        restored = 0
+        for s in Student.objects.filter(source=SOURCE, is_admin=False):
+            wanted = snap.get(self._student_key(s))
+            if not wanted:
+                continue
+            tid = teachers.get(wanted)
+            # Ustoz o'chirilgan bo'lsa tiklamaymiz — o'quvchi jadvaldagi
+            # ustozida qoladi
+            if not tid or tid == s.teacher_id:
+                continue
+            # Menejer paneli o'tkazishda eski ustozning guruhlaridan
+            # chiqaradi — tiklashda ham shunday bo'lsin, aks holda
+            # o'quvchi eski ustozning davomat ro'yxatida qolib ketadi
+            for g in s.groups.filter(teacher_id=s.teacher_id):
+                g.students.remove(s)
+            s.teacher_id = tid
+            s.manual_teacher = True
+            s.save(update_fields=["teacher", "manual_teacher"])
+            restored += 1
+        return restored
+
+    def _ensure_managers(self):
+        """Direktor/menejer akkauntlarini yaratadi (mavjudi tegilmaydi)."""
+        from register_withvue.models import Manager
+
+        def key(p):
+            d = re.sub(r"\D", "", str(p or ""))
+            if len(d) > 9 and d.startswith("998"):
+                d = d[3:]
+            return d[-9:] if len(d) >= 9 else d
+
+        existing = {key(m.phone) for m in Manager.objects.all()}
+        created = 0
+        for name, surname, phone in DEFAULT_MANAGERS:
+            if key(phone) in existing:
+                continue
+            Manager.objects.create(
+                name=name,
+                surname=surname,
+                phone=fmt_phone(phone) or phone,
+                password=make_password(DEFAULT_MANAGER_PASSWORD),
+            )
+            created += 1
+        return created
 
     def _create_admin_profiles(self):
         """Har bir ustozga admin-profil (Student.is_admin) ochadi."""

@@ -30,6 +30,12 @@ urlpatterns = [
     ),
     path("teachers/reassign/", views.reassign_students),
     # ───────────────────────────────
+    # MENEJER PANELI
+    # ───────────────────────────────
+    path("teachers/overview/", views.get_teachers_overview),
+    path("students/overview/", views.get_students_overview),
+    path("students/transfer/", views.transfer_students),
+    # ───────────────────────────────
     # STAGE PRICES
     # ───────────────────────────────
     path("stage-prices/", views.get_stage_prices),

@@ -81,6 +81,14 @@ class Student(models.Model):
     is_excellence = models.BooleanField(default=False)
     is_graduate = models.BooleanField(default=False, verbose_name="Bitiruvchi")
 
+    # Ustoz menejer paneli orqali qo'lda almashtirilgan. Sheet qayta
+    # import qilinganda import qilingan o'quvchilar o'chirilib qayta
+    # yaratiladi — shu bayroq bo'lsa biriktiruv tiklanadi, aks holda
+    # menejerning ishi har deployda yo'qolardi
+    manual_teacher = models.BooleanField(
+        default=False, verbose_name="Ustoz qo'lda biriktirilgan"
+    )
+
     coin_balance = models.IntegerField(default=0, verbose_name="Coin balansi")
 
     note = models.TextField(blank=True, verbose_name="Izoh")
