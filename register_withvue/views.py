@@ -168,7 +168,7 @@ def manager_register(request):
                 {"error": "Telefon raqam kiritilishi shart"}, status=400
             )
 
-        if Manager.objects.filter(phone=phone).exists():
+        if _find_manager_by_any_phone(phone, active_only=False):
             return JsonResponse(
                 {"error": "Bu telefon raqam allaqachon ro'yxatdan o'tgan"}, status=400
             )
@@ -205,12 +205,23 @@ def manager_login(request):
         phone = data.get("phone", "").strip()
         password = data.get("password", "")
 
-        if not phone or not password:
+        if not phone:
+            return JsonResponse({"error": "Telefon kiritilishi shart"}, status=400)
+
+        # Raqam qanday formatda kiritilsa ham topiladi ('+998 91 740 40 00',
+        # '917404000', '91-740-40-00' — hammasi bir xil menejerga tushadi)
+        manager = _find_manager_by_any_phone(phone)
+
+        # Login formasi avval faqat raqamni tekshiradi (parolsiz) —
+        # shunda menejer ham "topilmadi" deb rad etilmaydi
+        if password is None:
+            return JsonResponse({"exists": bool(manager)})
+
+        if not password:
             return JsonResponse(
                 {"error": "Telefon va parol kiritilishi shart"}, status=400
             )
 
-        manager = Manager.objects.filter(phone=phone, is_active=True).first()
         if not manager:
             return JsonResponse({"error": "Menejer topilmadi"}, status=404)
 
@@ -234,10 +245,13 @@ def manager_login(request):
 
 
 def get_managers(request):
-    """Barcha menejerlar ro'yxati."""
+    """Menejerlar ro'yxati. ?all=1 — o'chirilganlari (is_active=False) ham."""
     try:
+        qs = Manager.objects.all()
+        if request.GET.get("all") not in ("1", "true", "yes"):
+            qs = qs.filter(is_active=True)
         managers = list(
-            Manager.objects.filter(is_active=True).values(
+            qs.order_by("name", "surname").values(
                 "id", "name", "surname", "phone", "is_active", "created_at"
             )
         )
@@ -251,6 +265,9 @@ def update_manager(request, manager_id):
     """Menejer ma'lumotlarini yangilash."""
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
+    denied = _require_staff(request)
+    if denied:
+        return denied
     try:
         data = json.loads(request.body)
         manager = Manager.objects.filter(id=manager_id).first()
@@ -262,10 +279,25 @@ def update_manager(request, manager_id):
         if "surname" in data:
             manager.surname = data["surname"].strip()
         if "phone" in data:
-            new_phone = data["phone"].strip()
-            if Manager.objects.filter(phone=new_phone).exclude(id=manager_id).exists():
+            new_phone = (data["phone"] or "").strip()
+            if not new_phone:
                 return JsonResponse(
-                    {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
+                    {"error": "Telefon raqam bo'sh bo'lishi mumkin emas"}, status=400
+                )
+            # Formatdan qat'i nazar solishtiramiz — '917404000' va
+            # '+998 91 740 40 00' bir xil raqam
+            clash = next(
+                (
+                    m
+                    for m in Manager.objects.exclude(id=manager_id)
+                    if _phones_match(m.phone, new_phone)
+                ),
+                None,
+            )
+            if clash:
+                return JsonResponse(
+                    {"error": f"Bu telefon raqam band — {clash.name} {clash.surname}"},
+                    status=400,
                 )
             manager.phone = new_phone
         if "password" in data and data["password"]:
@@ -285,6 +317,9 @@ def delete_manager(request, manager_id):
     """Menejerni o'chirish (deaktivatsiya)."""
     if request.method != "DELETE":
         return JsonResponse({"error": "Method not allowed"}, status=405)
+    denied = _require_staff(request)
+    if denied:
+        return denied
     try:
         manager = Manager.objects.filter(id=manager_id).first()
         if not manager:
@@ -521,7 +556,7 @@ def create_teacher(request):
                 {"error": "Telefon raqam kiritilishi shart"}, status=400
             )
 
-        if Teacher.objects.filter(phone=phone).exists():
+        if _find_teacher_by_any_phone(phone):
             return JsonResponse(
                 {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
             )
@@ -547,15 +582,74 @@ def create_teacher(request):
 
 @csrf_exempt
 def delete_teacher(request, teacher_id):
-    """O'qituvchini o'chirish."""
+    """O'qituvchini o'chirish.
+
+    ?to_teacher_id=<id> berilsa, o'quvchilar va guruhlar avval o'sha
+    ustozga o'tkaziladi. Berilmasa ular biriktirilmagan holga tushadi
+    (FK SET_NULL) — bu holda nechta o'quvchi bo'shab qolgani javobda
+    qaytariladi, menejer keyin biriktirib qo'yishi mumkin.
+    """
     if request.method != "DELETE":
         return JsonResponse({"error": "Method not allowed"}, status=405)
+    denied = _require_staff(request)
+    if denied:
+        return denied
     try:
         teacher = Teacher.objects.filter(id=teacher_id).first()
         if not teacher:
             return JsonResponse({"error": "O'qituvchi topilmadi"}, status=404)
-        teacher.delete()
-        return JsonResponse({"message": "O'qituvchi o'chirildi!"})
+
+        to_id = request.GET.get("to_teacher_id")
+        to_teacher = None
+        if to_id:
+            if str(to_id) == str(teacher_id):
+                return JsonResponse(
+                    {
+                        "error": "O'quvchilarni o'sha ustozning o'ziga o'tkazib bo'lmaydi"
+                    },
+                    status=400,
+                )
+            to_teacher = Teacher.objects.filter(id=to_id).first()
+            if not to_teacher:
+                return JsonResponse(
+                    {"error": "Qabul qiluvchi o'qituvchi topilmadi"}, status=404
+                )
+
+        with transaction.atomic():
+            # Ustozning o'z admin profili o'quvchi sifatida qolib
+            # ketmasligi kerak — u ustoz bilan birga o'chadi
+            admin_profiles = Student.objects.filter(
+                teacher_id=teacher_id, is_admin=True
+            )
+            admin_count = admin_profiles.count()
+            admin_profiles.delete()
+
+            real_students = Student.objects.filter(teacher_id=teacher_id)
+            moved = real_students.count()
+            if to_teacher:
+                real_students.update(teacher_id=to_teacher.id, manual_teacher=True)
+                Group.objects.filter(teacher_id=teacher_id).update(
+                    teacher_id=to_teacher.id
+                )
+
+            name = teacher.name
+            teacher.delete()
+
+        return JsonResponse(
+            {
+                "message": (
+                    f"{name} o'chirildi — {moved} ta o'quvchi "
+                    + (
+                        f"{to_teacher.name}ga o'tkazildi"
+                        if to_teacher
+                        else "biriktirilmagan holga tushdi"
+                    )
+                ),
+                "students_moved": moved,
+                "admin_profiles_deleted": admin_count,
+                "to_teacher_id": to_teacher.id if to_teacher else None,
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -565,20 +659,38 @@ def update_teacher(request, teacher_id):
     """O'qituvchi ma'lumotlarini yangilash."""
     if request.method != "PATCH":
         return JsonResponse({"error": "Method not allowed"}, status=405)
+    denied = _require_staff(request)
+    if denied:
+        return denied
     try:
         data = json.loads(request.body)
         teacher = Teacher.objects.filter(id=teacher_id).first()
         if not teacher:
             return JsonResponse({"error": "O'qituvchi topilmadi"}, status=404)
 
+        old_phone = teacher.phone
         if "name" in data:
             teacher.name = data["name"].strip()
 
         if "phone" in data:
-            new_phone = data["phone"].strip()
-            if Teacher.objects.filter(phone=new_phone).exclude(id=teacher_id).exists():
+            new_phone = (data["phone"] or "").strip()
+            if not new_phone:
                 return JsonResponse(
-                    {"error": "Bu telefon raqam allaqachon mavjud"}, status=400
+                    {"error": "Telefon raqam bo'sh bo'lishi mumkin emas"}, status=400
+                )
+            # Formatdan qat'i nazar solishtiramiz — aks holda bir raqam
+            # ikki xil yozuvda ikki marta saqlanib qolardi
+            clash = next(
+                (
+                    t
+                    for t in Teacher.objects.exclude(id=teacher_id)
+                    if _phones_match(t.phone, new_phone)
+                ),
+                None,
+            )
+            if clash:
+                return JsonResponse(
+                    {"error": f"Bu telefon raqam band — {clash.name}"}, status=400
                 )
             teacher.phone = new_phone
 
@@ -602,7 +714,42 @@ def update_teacher(request, teacher_id):
                 )
 
         teacher.save()
-        return JsonResponse({"message": "O'qituvchi yangilandi!"})
+
+        # Ustozning admin profili (Student.is_admin) ham shu raqam bilan
+        # login qiladi — aks holda raqam o'zgargach ustoz tizimga kira
+        # olmay qolardi
+        if "phone" in data and not _phones_match(old_phone, teacher.phone):
+            # Student.phone unikal — raqamni allaqachon boshqa o'quvchi
+            # egallagan bo'lsa (aka-uka bir raqamni ishlatsa) uni phone2
+            # ga yozamiz, login ikkala maydonni ham tekshiradi
+            for prof in Student.objects.filter(teacher_id=teacher_id, is_admin=True):
+                if not (
+                    _phones_match(prof.phone, old_phone)
+                    or _phones_match(prof.phone2, old_phone)
+                ):
+                    continue
+                taken = (
+                    Student.objects.filter(phone=teacher.phone)
+                    .exclude(id=prof.id)
+                    .exists()
+                )
+                if taken:
+                    prof.phone2 = teacher.phone[:50]
+                else:
+                    prof.phone = teacher.phone[:20]
+                    if _phones_match(prof.phone2, teacher.phone):
+                        prof.phone2 = ""
+                prof.save(update_fields=["phone", "phone2"])
+
+        return JsonResponse(
+            {
+                "message": "O'qituvchi yangilandi!",
+                "id": teacher.id,
+                "name": teacher.name,
+                "phone": teacher.phone,
+                "is_senior": teacher.is_senior,
+            }
+        )
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     except Exception as e:
@@ -643,6 +790,9 @@ def reassign_students(request):
     """O'quvchilarni o'qituvchidan boshqa o'qituvchiga o'tkazish."""
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
+    denied = _require_staff(request)
+    if denied:
+        return denied
     try:
         data = json.loads(request.body)
         from_teacher_id = data.get("from_teacher_id")
@@ -661,9 +811,271 @@ def reassign_students(request):
         # eski ustozga bog'langan holicha qoladi
         updated = Student.objects.filter(
             teacher_id=from_teacher_id, is_admin=False, is_excellence=False
-        ).update(teacher_id=to_teacher_id)
+        ).update(teacher_id=to_teacher_id, manual_teacher=True)
         return JsonResponse(
             {"message": f"{updated} ta o'quvchi o'tkazildi!", "count": updated}
+        )
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+# ─────────────────────────────
+# MENEJER PANELI
+# ─────────────────────────────
+
+
+def sheet_import_status(request):
+    """Sheet importi holati — deploy'dan keyin tekshirish uchun.
+
+    Import server ko'tarilganda fon oqimida ishlaydi va atomic; xato
+    bo'lsa hammasi qaytariladi va tashqaridan hech narsa o'zgarmagandek
+    ko'rinadi. Shu sababli xatoning o'zi ham shu yerda ko'rsatiladi.
+    """
+    from .models import SheetImportMeta
+    from .management.commands.load_sheet_data import DATA_VERSION
+
+    meta = SheetImportMeta.objects.filter(pk=1).first()
+    return JsonResponse(
+        {
+            "code_version": DATA_VERSION,
+            "db_version": meta.version if meta else None,
+            "up_to_date": bool(meta and meta.version == DATA_VERSION),
+            "imported_at": meta.imported_at.isoformat() if meta else None,
+            "last_error": (meta.last_error if meta else "") or "",
+            "counts": {
+                "teachers": Teacher.objects.count(),
+                "students": Student.objects.count(),
+                "managers": Manager.objects.count(),
+                "leads": Lead.objects.count(),
+                "groups": Group.objects.count(),
+            },
+        }
+    )
+
+
+def _require_staff(request):
+    """Chaqiruvchi menejer yoki ustozmi — shuni tekshiradi.
+
+    ⚠️ Bu TO'LIQ AUTENTIFIKATSIYA EMAS. Loyihada sessiya/token tizimi
+    yo'q, shuning uchun bu yerda faqat 'X-User-Phone' sarlavhasi
+    tekshiriladi — uni qo'lda soxtalashtirish mumkin. Maqsadi: ustoz
+    o'chirish va o'quvchi ko'chirish kabi qaytarib bo'lmaydigan
+    amallar tasodifan yoki URL'ni bilgan begona odam tomonidan
+    ishga tushib ketmasin. Haqiqiy himoya uchun token/sessiya
+    autentifikatsiyasi alohida qo'shilishi kerak.
+
+    Mos kelsa None, aks holda tayyor 403 javobini qaytaradi.
+    """
+    phone = (request.headers.get("X-User-Phone") or "").strip()
+    if phone and (
+        _find_manager_by_any_phone(phone) or _find_teacher_by_any_phone(phone)
+    ):
+        return None
+    return JsonResponse(
+        {"error": "Bu amal uchun menejer yoki ustoz sifatida kirish kerak"},
+        status=403,
+    )
+
+
+def _real_students():
+    """Haqiqiy o'quvchilar — ustozlarning admin profillari kirmaydi."""
+    return Student.objects.filter(is_admin=False, is_excellence=False)
+
+
+def get_teachers_overview(request):
+    """Menejer uchun ustozlar sahifasi — har biri bo'yicha statistika.
+
+    Login qila oladimi (`can_login`) ham qaytariladi: import paytida
+    telefoni to'liq kelmagan ustozlarga shartli kod berilgan, ular
+    raqami kiritilmaguncha tizimga kira olmaydi.
+    """
+    try:
+        counts = dict(
+            _real_students()
+            .filter(teacher__isnull=False)
+            .values_list("teacher_id")
+            .annotate(n=db_models.Count("id"))
+        )
+        groups = dict(
+            Group.objects.filter(teacher__isnull=False)
+            .values_list("teacher_id")
+            .annotate(n=db_models.Count("id"))
+        )
+        data = []
+        for t in Teacher.objects.order_by("name"):
+            key = _phone_key(t.phone)
+            data.append(
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "phone": t.phone,
+                    "is_senior": t.is_senior,
+                    "penalty_limit": t.penalty_limit,
+                    "students_count": counts.get(t.id, 0),
+                    "groups_count": groups.get(t.id, 0),
+                    "can_login": len(key) >= MIN_PHONE_KEY_LEN,
+                    # O'zbek raqami 9 xonali — undan qisqasi jadvaldan
+                    # chala kelgan, menejer to'g'rilashi kerak
+                    "phone_complete": len(key) == 9,
+                    "phone_note": (
+                        ""
+                        if len(key) == 9
+                        else (
+                            "Telefon raqam yo'q — tizimga kira olmaydi"
+                            if len(key) < MIN_PHONE_KEY_LEN
+                            else f"Raqam to'liq emas ({len(key)} xonali) — tekshiring"
+                        )
+                    ),
+                }
+            )
+        return JsonResponse(data, safe=False)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def get_students_overview(request):
+    """Barcha o'quvchilar va ular biriktirilgan ustoz.
+
+    Filtrlar: ?teacher_id=<id> — bitta ustozning o'quvchilari,
+              ?teacher_id=none — biriktirilmaganlar,
+              ?search=<matn> — ism yoki telefon bo'yicha,
+              ?include_graduates=1 — bitiruvchilar ham.
+    """
+    try:
+        qs = _real_students().select_related("teacher")
+        if request.GET.get("include_graduates") not in ("1", "true", "yes"):
+            qs = qs.filter(is_graduate=False)
+
+        teacher_id = (request.GET.get("teacher_id") or "").strip()
+        if teacher_id in ("none", "null", "0"):
+            qs = qs.filter(teacher__isnull=True)
+        elif teacher_id:
+            try:
+                qs = qs.filter(teacher_id=int(teacher_id))
+            except ValueError:
+                return JsonResponse({"error": "Invalid teacher_id"}, status=400)
+
+        search = (request.GET.get("search") or "").strip()
+        rows = list(qs.order_by("name", "surname"))
+        if search:
+            digits = _re.sub(r"\D", "", search)
+            # '+998 91 740 40 00' kabi qidiruvda mamlakat kodi bazadagi
+            # yozuvda yo'q — uni olib tashlaymiz
+            if len(digits) > 9 and digits.startswith("998"):
+                digits = digits[3:]
+            low = search.lower()
+
+            def hit(s):
+                if low in f"{s.name} {s.surname}".lower():
+                    return True
+                # Saqlangan raqamda bo'shliq bor ('91 740 40 00'), shuning
+                # uchun ikkala tomonni ham raqamlargacha tozalab solishtiramiz
+                if len(digits) >= 3:
+                    stored = _re.sub(r"\D", "", f"{s.phone} {s.phone2}")
+                    return digits in stored
+                return False
+
+            rows = [s for s in rows if hit(s)]
+
+        data = [
+            {
+                "id": s.id,
+                "name": s.name,
+                "surname": s.surname,
+                # Import paytida raqami band bo'lgan o'quvchilarga '—0001'
+                # kabi shartli kod berilgan — uni ko'rsatmaymiz
+                "phone": "" if s.phone.startswith("—") else s.phone,
+                "phone2": s.phone2,
+                "teacher_id": s.teacher_id,
+                "teacher_name": s.teacher.name if s.teacher else "",
+                "stage": s.stage,
+                "schedule": s.schedule,
+                "is_graduate": s.is_graduate,
+                "coin_balance": s.coin_balance,
+            }
+            for s in rows
+        ]
+        return JsonResponse({"count": len(data), "students": data})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def transfer_students(request):
+    """Tanlangan o'quvchilarni boshqa ustozga o'tkazadi.
+
+    Body: {student_ids: [1, 2, ...], to_teacher_id: <id>,
+           detach_old_groups: true}
+
+    Bir nechta o'quvchini birdaniga belgilab o'tkazish uchun.
+    Standart holatda o'quvchi eski ustozning guruhlaridan chiqariladi —
+    aks holda u yangi ustozga tegishli bo'lsa-da, eski ustozning
+    davomat ro'yxatida qolib ketardi.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    denied = _require_staff(request)
+    if denied:
+        return denied
+    try:
+        data = json.loads(request.body)
+        ids = data.get("student_ids") or []
+        to_teacher_id = data.get("to_teacher_id")
+
+        if not isinstance(ids, list) or not ids:
+            return JsonResponse(
+                {"error": "student_ids — bo'sh bo'lmagan ro'yxat bo'lishi kerak"},
+                status=400,
+            )
+        if not to_teacher_id:
+            return JsonResponse(
+                {"error": "to_teacher_id kiritilishi shart"}, status=400
+            )
+
+        to_teacher = Teacher.objects.filter(id=to_teacher_id).first()
+        if not to_teacher:
+            return JsonResponse({"error": "Yangi o'qituvchi topilmadi"}, status=404)
+
+        try:
+            ids = [int(i) for i in ids]
+        except (ValueError, TypeError):
+            return JsonResponse(
+                {"error": "student_ids butun son bo'lishi kerak"}, status=400
+            )
+
+        students = list(_real_students().filter(id__in=ids))
+        found = {s.id for s in students}
+        missing = [i for i in ids if i not in found]
+
+        detach = data.get("detach_old_groups", True)
+        detached = 0
+        with transaction.atomic():
+            if detach:
+                for s in students:
+                    if s.teacher_id and s.teacher_id != to_teacher.id:
+                        old_groups = s.groups.filter(teacher_id=s.teacher_id)
+                        detached += old_groups.count()
+                        for g in old_groups:
+                            g.students.remove(s)
+            # manual_teacher — sheet qayta import qilinganda bu biriktiruv
+            # tiklanadi, aks holda menejerning ishi deployda yo'qolardi
+            moved = (
+                _real_students()
+                .filter(id__in=found)
+                .update(teacher_id=to_teacher.id, manual_teacher=True)
+            )
+
+        return JsonResponse(
+            {
+                "message": f"{moved} ta o'quvchi {to_teacher.name}ga o'tkazildi",
+                "count": moved,
+                "to_teacher_id": to_teacher.id,
+                "to_teacher_name": to_teacher.name,
+                "groups_detached": detached,
+                "not_found": missing,
+            }
         )
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
@@ -803,11 +1215,38 @@ def update_student(request, student_id):
 
 import re as _re
 
+# Solishtirish uchun kalit shu uzunlikdan qisqa bo'lsa ishlatilmaydi —
+# aks holda import paytida berilgan shartli kodlar ('t0014', '—0007')
+# bir-biriga mos kelib ketardi
+MIN_PHONE_KEY_LEN = 7
 
-def _digits9(phone):
-    """Telefonning oxirgi 9 raqami — turli formatlarni solishtirish uchun."""
+
+def _phone_key(phone):
+    """Telefonni solishtirish uchun normal ko'rinishga keltiradi.
+
+    Format qanday bo'lishidan qat'i nazar bir xil natija beradi:
+    '+998 91 740 40 00', '917404000', '91-740-40-00' → '917404000'.
+
+    Jadvalda to'liq kiritilmagan qisqa raqamlar (masalan 8 xonali
+    '91858990') ham o'z raqamlari bilan qaytariladi — eski versiya
+    ularni bo'sh satrga aylantirgani uchun bunday ustozlar hech
+    qachon topilmasdi va tizimga kira olmasdi.
+    """
     d = _re.sub(r"\D", "", str(phone or ""))
-    return d[-9:] if len(d) >= 9 else ""
+    if len(d) > 9 and d.startswith("998"):
+        d = d[3:]
+    return d[-9:] if len(d) >= 9 else d
+
+
+# Eski nom — PhoneVerification va TelegramSubscriber yozuvlari shu
+# kalit bilan saqlangan, 9 xonali raqamlar uchun natija o'zgarmagan
+_digits9 = _phone_key
+
+
+def _phones_match(a, b):
+    """Ikki telefon (format farqidan qat'i nazar) bir xilmi."""
+    ka, kb = _phone_key(a), _phone_key(b)
+    return bool(ka) and len(ka) >= MIN_PHONE_KEY_LEN and ka == kb
 
 
 def _find_students_by_any_phone(phone):
@@ -817,13 +1256,13 @@ def _find_students_by_any_phone(phone):
     Bir nechta bo'lishi normal — aka-uka bir xil ota-ona raqamini
     ishlatsa, ular parol (ism-familiya) bo'yicha ajratiladi.
     """
-    target = _digits9(phone)
-    if not target:
+    target = _phone_key(phone)
+    if len(target) < MIN_PHONE_KEY_LEN:
         return list(Student.objects.select_related("teacher").filter(phone=phone))
     return [
         s
         for s in Student.objects.select_related("teacher").all()
-        if _digits9(s.phone) == target or _digits9(s.phone2) == target
+        if _phone_key(s.phone) == target or _phone_key(s.phone2) == target
     ]
 
 
@@ -838,27 +1277,97 @@ def _find_teacher_by_any_phone(phone):
     exact = Teacher.objects.filter(phone=phone).first()
     if exact:
         return exact
-    target = _digits9(phone)
-    if not target:
+    target = _phone_key(phone)
+    if len(target) < MIN_PHONE_KEY_LEN:
         return None
     for t in Teacher.objects.all():
-        if _digits9(t.phone) == target:
+        if _phone_key(t.phone) == target:
             return t
     return None
+
+
+def _find_manager_by_any_phone(phone, active_only=True):
+    """Menejerni telefon bo'yicha topadi — format farqiga qaramasdan."""
+    qs = (
+        Manager.objects.filter(is_active=True) if active_only else Manager.objects.all()
+    )
+    exact = qs.filter(phone=phone).first()
+    if exact:
+        return exact
+    target = _phone_key(phone)
+    if len(target) < MIN_PHONE_KEY_LEN:
+        return None
+    for m in qs:
+        if _phone_key(m.phone) == target:
+            return m
+    return None
+
+
+# Jadvalda ismlar turk/nemis harflari bilan kelgan ('Möydınov',
+# 'Damırov') — egasi ularni klaviaturada tera olmaydi. NFKD ajratmaydigan
+# harflarni qo'lda moslashtiramiz, qolganini NFKD hal qiladi.
+_LOOKALIKE = str.maketrans(
+    {
+        "ı": "i",
+        "İ": "i",
+        "ş": "s",
+        "Ş": "s",
+        "ğ": "g",
+        "Ğ": "g",
+        "ç": "c",
+        "Ç": "c",
+        "ö": "o",
+        "Ö": "o",
+        "ü": "u",
+        "Ü": "u",
+        "ə": "a",
+        "æ": "a",
+        "ø": "o",
+        "ß": "s",
+    }
+)
+
+
+def _fold_name(value):
+    """Ismni solishtirish uchun sodda ko'rinishga keltiradi.
+
+    Katta-kichik harf, bo'shliq, apostrof va diakritik belgilar
+    hisobga olinmaydi: 'Möydınov' va 'moydinov' bir xil.
+    """
+    import unicodedata
+
+    s = str(value or "").lower().translate(_LOOKALIKE)
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in s if ch.isalnum() and not unicodedata.combining(ch))
 
 
 def _name_password_matches(student, password):
     """Import qilingan studentlar uchun parol — ism va familiya.
 
-    Katta-kichik harf, bo'shliq va ' belgilar farq qilmaydi:
-    'Abdulloh Ibrohimov', 'abdullohibrohimov' — ikkalasi ham to'g'ri.
+    'Abdulloh Ibrohimov', 'abdullohibrohimov', 'Ibrohimov Abdulloh' —
+    hammasi to'g'ri. Jadvaldan ismga qo'shilib kelgan bir-ikki harfli
+    qoldiqlar ("Abdurovuf Möydınov y" dagi 'y') ham talab qilinmaydi.
     """
+    typed = _fold_name(password)
+    if not typed:
+        return False
 
-    def norm(s):
-        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+    tokens = [
+        t
+        for t in (_fold_name(p) for p in f"{student.name} {student.surname}".split())
+        if t
+    ]
+    if not tokens:
+        return False
 
-    full = norm(f"{student.name}{student.surname}")
-    return bool(full) and norm(password) == full
+    # jadval qoldig'i bo'lgan qisqa bo'laklarsiz variant
+    core = [t for t in tokens if len(t) > 2] or tokens
+
+    forms = set()
+    for variant in (tokens, core):
+        forms.add("".join(variant))
+        forms.add("".join(reversed(variant)))
+    return typed in forms
 
 
 @csrf_exempt
@@ -1791,64 +2300,143 @@ def get_group(request, group_id):
 
 @csrf_exempt
 def create_group(request):
-    """Yangi guruh yaratish."""
+    """Yangi guruh yaratish.
+
+    Body: {
+        name: "Guruh nomi",
+        teacher_id: <id>,
+        course_id: <id>,
+        lesson_time: "HH:MM" (default: "09:00"),
+        room: "xona",
+        schedule: "odd" | "even",
+        students: [<id>, <id>, ...]
+    }
+    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
-        name = data.get("name", "").strip()
 
+        # ✅ Guruh nomi majburiy
+        name = data.get("name", "").strip()
         if not name:
             return JsonResponse({"error": "Guruh nomi kiritilishi shart"}, status=400)
 
+        # ✅ O'qituvchi validation
         teacher = None
         if data.get("teacher_id"):
             try:
-                teacher = Teacher.objects.filter(id=int(data.get("teacher_id"))).first()
-            except ValueError:
-                pass
+                teacher_id = int(data["teacher_id"])
+                teacher = Teacher.objects.filter(id=teacher_id).first()
+                if not teacher:
+                    return JsonResponse(
+                        {"error": f"O'qituvchi (ID={teacher_id}) topilmadi"}, status=404
+                    )
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {"error": "teacher_id son bo'lishi kerak"}, status=400
+                )
 
+        # ✅ Kurs validation
         course = None
         if data.get("course_id"):
             try:
-                course = Course.objects.filter(id=int(data.get("course_id"))).first()
-            except ValueError:
-                pass
+                course_id = int(data["course_id"])
+                course = Course.objects.filter(id=course_id).first()
+                if not course:
+                    return JsonResponse(
+                        {"error": f"Kurs (ID={course_id}) topilmadi"}, status=404
+                    )
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {"error": "course_id son bo'lishi kerak"}, status=400
+                )
 
+        # ✅ Dars vaqti validation
         lesson_time = data.get("lesson_time", "09:00").strip()
-        schedule = data.get("schedule", "odd").strip()
+        try:
+            parts = lesson_time.split(":")
+            if len(parts) != 2:
+                raise ValueError("Invalid format")
+            h, m = int(parts[0]), int(parts[1])
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                raise ValueError("Invalid time")
+        except (ValueError, IndexError):
+            return JsonResponse(
+                {
+                    "error": "lesson_time 'HH:MM' formati bo'lishi kerak (masalan: '14:30')"
+                },
+                status=400,
+            )
 
+        # ✅ Xona validation
+        room = data.get("room", "").strip()
+        if len(room) > 50:
+            return JsonResponse(
+                {"error": "Xona nomi 50 belgidan ortiq bo'lishi mumkin emas"},
+                status=400,
+            )
+
+        # ✅ Schedule validation
+        schedule = data.get("schedule", "odd").strip()
         if schedule not in ["odd", "even"]:
             return JsonResponse(
                 {"error": "schedule 'odd' yoki 'even' bo'lishi kerak"}, status=400
             )
 
-        group = Group.objects.create(
-            name=name,
-            teacher=teacher,
-            course=course,
-            lesson_time=lesson_time,
-            room=data.get("room", "").strip(),
-            schedule=schedule,
-        )
-
-        # ✅ TO'G'RI - ManyToMany
+        # ✅ Student IDs validation
         student_ids = data.get("students", [])
+        validated_students = []
         if student_ids:
+            if not isinstance(student_ids, list):
+                return JsonResponse(
+                    {"error": "students ro'yxat bo'lishi kerak"}, status=400
+                )
+
             try:
                 student_ids = [int(sid) for sid in student_ids]
-                group.students.set(student_ids)
             except (ValueError, TypeError):
-                pass
+                return JsonResponse(
+                    {"error": "students ichidagi ID'lar son bo'lishi kerak"}, status=400
+                )
+
+            # O'quvchilar mavjudligini check qilish
+            existing_students = set(
+                Student.objects.filter(id__in=student_ids).values_list("id", flat=True)
+            )
+            not_found = [sid for sid in student_ids if sid not in existing_students]
+            if not_found:
+                return JsonResponse(
+                    {"error": f"Topilmagan o'quvchi ID'lari: {not_found}"}, status=404
+                )
+            validated_students = student_ids
+
+        # ✅ Guruhni atomic transaction'da yaratish
+        with transaction.atomic():
+            group = Group.objects.create(
+                name=name,
+                teacher=teacher,
+                course=course,
+                lesson_time=lesson_time,
+                room=room,
+                schedule=schedule,
+            )
+
+            # Talabalar qo'shish
+            if validated_students:
+                group.students.set(validated_students)
 
         serializer = GroupSerializer(group)
-        return JsonResponse(serializer.data, status=201)
+        return JsonResponse(
+            {"message": f"'{name}' guruh muvaffaqiyatli yaratildi", **serializer.data},
+            status=201,
+        )
 
     except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse({"error": "JSON format noto'g'ri"}, status=400)
     except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        return JsonResponse({"error": f"Xato: {str(e)}"}, status=400)
 
 
 @csrf_exempt

@@ -149,6 +149,13 @@ CORS_ALLOWED_ORIGINS = [
 # test uchun
 CORS_ALLOW_ALL_ORIGINS = True
 
+# Menejer paneli destruktiv amallarda 'X-User-Phone' sarlavhasini
+# yuboradi. Standart bo'lmagan sarlavha CORS preflight'ni ishga
+# tushiradi — ro'yxatga qo'shilmasa brauzer so'rovni bloklaydi.
+from corsheaders.defaults import default_headers  # noqa: E402
+
+CORS_ALLOW_HEADERS = (*default_headers, "x-user-phone")
+
 # ─────────────────────────────
 # TELEGRAM BOT (o'quvchilarga xabar yuborish)
 # Tavsiya: tokenni Render'da TG_BOT_TOKEN env o'zgaruvchisiga ko'chiring

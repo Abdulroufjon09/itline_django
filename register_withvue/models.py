@@ -81,6 +81,14 @@ class Student(models.Model):
     is_excellence = models.BooleanField(default=False)
     is_graduate = models.BooleanField(default=False, verbose_name="Bitiruvchi")
 
+    # Ustoz menejer paneli orqali qo'lda almashtirilgan. Sheet qayta
+    # import qilinganda import qilingan o'quvchilar o'chirilib qayta
+    # yaratiladi — shu bayroq bo'lsa biriktiruv tiklanadi, aks holda
+    # menejerning ishi har deployda yo'qolardi
+    manual_teacher = models.BooleanField(
+        default=False, verbose_name="Ustoz qo'lda biriktirilgan"
+    )
+
     coin_balance = models.IntegerField(default=0, verbose_name="Coin balansi")
 
     note = models.TextField(blank=True, verbose_name="Izoh")
@@ -543,6 +551,10 @@ class SheetImportMeta(models.Model):
 
     version = models.CharField(max_length=20, default="")
     imported_at = models.DateTimeField(auto_now=True)
+    # Import server ko'tarilganda fon oqimida ishlaydi — u yerdagi xato
+    # faqat logga tushib, tashqaridan ko'rinmay qolardi. Endi shu yerda
+    # saqlanadi va /api/sheet-import-status/ orqali ko'rsa bo'ladi.
+    last_error = models.TextField(blank=True, verbose_name="Oxirgi xato")
 
     class Meta:
         verbose_name = "Sheet import holati"
