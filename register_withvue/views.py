@@ -1238,17 +1238,60 @@ def _find_manager_by_any_phone(phone, active_only=True):
     return None
 
 
+# Jadvalda ismlar turk/nemis harflari bilan kelgan ('Möydınov',
+# 'Damırov') — egasi ularni klaviaturada tera olmaydi. NFKD ajratmaydigan
+# harflarni qo'lda moslashtiramiz, qolganini NFKD hal qiladi.
+_LOOKALIKE = str.maketrans(
+    {
+        "ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+        "ç": "c", "Ç": "c", "ö": "o", "Ö": "o", "ü": "u", "Ü": "u",
+        "ə": "a", "æ": "a", "ø": "o", "ß": "s",
+    }
+)
+
+
+def _fold_name(value):
+    """Ismni solishtirish uchun sodda ko'rinishga keltiradi.
+
+    Katta-kichik harf, bo'shliq, apostrof va diakritik belgilar
+    hisobga olinmaydi: 'Möydınov' va 'moydinov' bir xil.
+    """
+    import unicodedata
+
+    s = str(value or "").lower().translate(_LOOKALIKE)
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(
+        ch for ch in s if ch.isalnum() and not unicodedata.combining(ch)
+    )
+
+
 def _name_password_matches(student, password):
     """Import qilingan studentlar uchun parol — ism va familiya.
 
-    Katta-kichik harf, bo'shliq va ' belgilar farq qilmaydi:
-    'Abdulloh Ibrohimov', 'abdullohibrohimov' — ikkalasi ham to'g'ri.
+    'Abdulloh Ibrohimov', 'abdullohibrohimov', 'Ibrohimov Abdulloh' —
+    hammasi to'g'ri. Jadvaldan ismga qo'shilib kelgan bir-ikki harfli
+    qoldiqlar ("Abdurovuf Möydınov y" dagi 'y') ham talab qilinmaydi.
     """
-    def norm(s):
-        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+    typed = _fold_name(password)
+    if not typed:
+        return False
 
-    full = norm(f"{student.name}{student.surname}")
-    return bool(full) and norm(password) == full
+    tokens = [
+        t
+        for t in (_fold_name(p) for p in f"{student.name} {student.surname}".split())
+        if t
+    ]
+    if not tokens:
+        return False
+
+    # jadval qoldig'i bo'lgan qisqa bo'laklarsiz variant
+    core = [t for t in tokens if len(t) > 2] or tokens
+
+    forms = set()
+    for variant in (tokens, core):
+        forms.add("".join(variant))
+        forms.add("".join(reversed(variant)))
+    return typed in forms
 
 
 @csrf_exempt
