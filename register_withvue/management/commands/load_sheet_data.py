@@ -78,8 +78,10 @@ EXTRA_TEACHERS = [
     ("Ibrohimjon", "91858990"),
 ]
 
-# Menejerlar (direktor) — o'chirilmaydi, faqat yo'q bo'lsa yaratiladi
-DEFAULT_MANAGER_PASSWORD = "excel2024"
+# Menejerlar (direktor) — o'chirilmaydi, faqat yo'q bo'lsa yaratiladi.
+# Parol ustozlarnikidan (excel2024) farq qiladi: menejer eng yuqori
+# daraja, uning paroli views.EXCELLENCE_PASSWORD bilan bir xil
+DEFAULT_MANAGER_PASSWORD = "excellence2024"
 DEFAULT_MANAGERS = [
     # Markazning asosiy raqami — jadvalda ko'plab o'quvchilarning
     # ota-ona ustunida uchraydi, lekin akkaunt sifatida ro'yxatda yo'q edi
