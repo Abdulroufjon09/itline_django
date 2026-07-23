@@ -279,6 +279,13 @@ class Group(models.Model):
     students = models.ManyToManyField(Student, related_name="groups")
     lesson_time = models.TimeField(null=False, blank=False)
     room = models.CharField(max_length=50, blank=True, default="", verbose_name="Xona")
+
+    # Guruh ochilgan (birinchi dars boshlangan) sana. Oylik to'lov shu
+    # kundan boshlab hisoblanadi — masalan 25-kuni ochilgan guruhning
+    # to'lov muddati har oyning 25-kuni bo'ladi (1-kuni emas).
+    opened_date = models.DateField(
+        null=True, blank=True, verbose_name="Guruh ochilgan sana"
+    )
     course = models.ForeignKey(
         Course,
         on_delete=models.PROTECT,
@@ -329,6 +336,7 @@ class CoinTransaction(models.Model):
         ("manual", "Teacher tomonidan qo'lda"),
         ("purchase", "Magazindan xarid"),
         ("purchase_cancel", "Xarid bekor qilindi (qaytarildi)"),
+        ("payment_ontime", "Oylik to'lov vaqtida"),
     ]
 
     student = models.ForeignKey(
@@ -385,6 +393,16 @@ class AttendanceCoinSettings(models.Model):
     present = models.IntegerField(default=5, verbose_name="Keldi")
     late = models.IntegerField(default=2, verbose_name="Kech keldi")
     absent = models.IntegerField(default=-10, verbose_name="Kelmadi")
+
+    # Oylik to'lovni vaqtida (yoki grace kunlar ichida) qilgan o'quvchiga
+    # beriladigan coin. Miqdor va muddat menejer tomonidan o'zgartiriladi.
+    payment_ontime = models.IntegerField(
+        default=120, verbose_name="Vaqtida to'lov uchun coin"
+    )
+    payment_grace_days = models.IntegerField(
+        default=5, verbose_name="Kechikishga ruxsat (kun)"
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -397,7 +415,14 @@ class AttendanceCoinSettings(models.Model):
     @classmethod
     def get_settings(cls):
         obj, _ = cls.objects.get_or_create(
-            pk=1, defaults={"present": 5, "late": 2, "absent": -10}
+            pk=1,
+            defaults={
+                "present": 5,
+                "late": 2,
+                "absent": -10,
+                "payment_ontime": 120,
+                "payment_grace_days": 5,
+            },
         )
         return obj
 
@@ -677,3 +702,27 @@ class Expense(models.Model):
 
     def __str__(self):
         return f"{self.title} — {self.amount}"
+
+
+class LessonReminderLog(models.Model):
+    """Darsdan oldingi telegram eslatmasi yuborilganini belgilaydi.
+
+    Bir guruhga bir kunda faqat bitta eslatma yuboriladi — board (jadval
+    ekrani) bir necha marta so'rov yuborsa ham takror ketmasligi uchun.
+    """
+
+    group = models.ForeignKey(
+        Group, on_delete=models.CASCADE, related_name="reminder_logs"
+    )
+    date = models.DateField(verbose_name="Sana")
+    sent = models.IntegerField(default=0, verbose_name="Yuborildi")
+    no_chat = models.IntegerField(default=0, verbose_name="Botga ulanmagan")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("group", "date")
+        verbose_name = "Dars eslatmasi"
+        verbose_name_plural = "Dars eslatmalari"
+
+    def __str__(self):
+        return f"{self.group} — {self.date}"

@@ -1,5 +1,7 @@
+import calendar
 import json
-from datetime import datetime
+import logging
+from datetime import datetime, date, timedelta
 
 from django.db import transaction
 from django.db.models import Sum, F
@@ -29,6 +31,7 @@ from .models import (
     Expense,
     Lead,
     AdChannel,
+    LessonReminderLog,
 )
 
 from django.utils import timezone
@@ -147,6 +150,141 @@ def apply_coin_transaction(
     )
     student.refresh_from_db(fields=["coin_balance"])
     return student.coin_balance
+
+
+# ─────────────────────────────
+# OYLIK TO'LOV MUDDATI (guruh ochilgan kunga bog'liq)
+# ─────────────────────────────
+
+# Toshkent UTC+5, yozgi vaqt yo'q — server UTC bo'lgani uchun sanani
+# to'g'ri chiqarish uchun qo'lda siljitamiz.
+TASHKENT_OFFSET = timedelta(hours=5)
+
+WEEKDAY_NAMES_UZ = [
+    "Dushanba",
+    "Seshanba",
+    "Chorshanba",
+    "Payshanba",
+    "Juma",
+    "Shanba",
+    "Yakshanba",
+]
+
+
+def tashkent_now():
+    return timezone.now() + TASHKENT_OFFSET
+
+
+def tashkent_today():
+    return tashkent_now().date()
+
+
+def student_primary_group(student):
+    """O'quvchining asosiy guruhi (birinchi biriktirilgani).
+
+    `.all()` orqali — prefetch_related qilingan bo'lsa qo'shimcha so'rovsiz.
+    """
+    groups = list(student.groups.all())
+    if not groups:
+        return None
+    return min(groups, key=lambda g: g.id)
+
+
+def parse_opened_date(value):
+    """'YYYY-MM-DD' sanani date'ga o'giradi. (date_or_None, error_or_None).
+
+    Bo'sh/None qiymat — sana yo'q (xato emas).
+    """
+    if value in (None, ""):
+        return None, None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None, None
+        # ISO datetime kelsa ("2026-01-25T00:00:00") faqat sanani olamiz
+        value = value[:10]
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date(), None
+        except ValueError:
+            return None, "opened_date 'YYYY-MM-DD' formatida bo'lishi kerak"
+    return None, "opened_date noto'g'ri"
+
+
+def payment_due_date(month_str, group):
+    """Guruh ochilgan kunga qarab shu oyning to'lov muddatini qaytaradi.
+
+    month_str: "YYYY-MM". Guruh 25-kuni ochilgan bo'lsa — muddat oyning
+    25-kuni. Guruh ochilgan sana bo'lmasa — oyning 1-kuni (eski xatti-harakat).
+    """
+    try:
+        year, mon = (int(x) for x in month_str.split("-"))
+    except (ValueError, AttributeError):
+        return None
+    day = 1
+    if group and group.opened_date:
+        day = group.opened_date.day
+    # Qisqa oylar uchun (masalan fevral) kunni oy oxiriga cheklaymiz
+    last_day = calendar.monthrange(year, mon)[1]
+    day = min(day, last_day)
+    try:
+        return date(year, mon, day)
+    except ValueError:
+        return None
+
+
+def payment_is_ontime(month_str, group, ref_date=None, grace_days=None):
+    """To'lov shu kunga (ref_date) qadar vaqtida qilinganmi?
+
+    Vaqtida = to'lov muddati (guruh ochilgan kun) yoki undan keyingi
+    grace_days kun ichida. ref_date berilmasa — bugungi (Toshkent) sana.
+    """
+    due = payment_due_date(month_str, group)
+    if due is None:
+        return False
+    if ref_date is None:
+        ref_date = tashkent_today()
+    if grace_days is None:
+        grace_days = AttendanceCoinSettings.get_settings().payment_grace_days
+    return ref_date <= due + timedelta(days=max(int(grace_days), 0))
+
+
+def sync_payment_ontime_coin(payment):
+    """To'lov holatiga qarab 'vaqtida to'lov' coin mukofotini beradi/qaytaradi.
+
+    Idempotent: bir oy uchun eng ko'pi bilan bitta mukofot bo'ladi. To'lov
+    bekor qilinsa yoki kechikkan bo'lsa — mukofot qaytariladi.
+    """
+    student = payment.student
+    month = payment.month
+    note_prefix = f"{month} oyi"
+
+    existing = CoinTransaction.objects.filter(
+        student=student, reason="payment_ontime", note__startswith=note_prefix
+    ).first()
+
+    settings_obj = AttendanceCoinSettings.get_settings()
+    reward = settings_obj.payment_ontime
+
+    should_reward = bool(
+        payment.is_paid
+        and reward
+        and payment_is_ontime(
+            month,
+            student_primary_group(student),
+            grace_days=settings_obj.payment_grace_days,
+        )
+    )
+
+    if should_reward and not existing:
+        apply_coin_transaction(
+            student,
+            reward,
+            "payment_ontime",
+            note=f"{note_prefix} to'lovi vaqtida (+{reward} coin)",
+        )
+    elif not should_reward and existing:
+        # CoinTransaction.delete() balansni avtomatik qaytaradi
+        existing.delete()
 
 
 # ─────────────────────────────────────────
@@ -1303,6 +1441,41 @@ def _find_manager_by_any_phone(phone, active_only=True):
     return None
 
 
+def _find_admin_student_by_phone(phone):
+    """Telefon bo'yicha admin/excellence o'quvchini topadi (format farqiga qaramay)."""
+    target = _phone_key(phone)
+    if len(target) < MIN_PHONE_KEY_LEN:
+        return None
+    for s in Student.objects.filter(
+        db_models.Q(is_admin=True) | db_models.Q(is_excellence=True)
+    ).only("id", "phone", "phone2"):
+        if _phone_key(s.phone) == target or _phone_key(s.phone2) == target:
+            return s
+    return None
+
+
+def _require_manager_or_admin(request):
+    """Chaqiruvchi menejer yoki admin o'quvchimi — shuni tekshiradi.
+
+    `_require_staff`'dan farqi: oddiy ustozlarga ruxsat bermaydi — faqat
+    menejer yoki is_admin/is_excellence o'quvchi. O'quvchini butunlay
+    o'chirish kabi qaytarib bo'lmaydigan amallar uchun.
+
+    ⚠️ Bu TO'LIQ AUTENTIFIKATSIYA EMAS — 'X-User-Phone' sarlavhasini
+    soxtalashtirish mumkin. Maqsadi: begona yoki oddiy ustoz tasodifan
+    o'chirib yubormasin. Mos kelsa None, aks holda 403 javob.
+    """
+    phone = (request.headers.get("X-User-Phone") or "").strip()
+    if phone and (
+        _find_manager_by_any_phone(phone) or _find_admin_student_by_phone(phone)
+    ):
+        return None
+    return JsonResponse(
+        {"error": "Bu amal uchun admin yoki menejer sifatida kirish kerak"},
+        status=403,
+    )
+
+
 # Jadvalda ismlar turk/nemis harflari bilan kelgan ('Möydınov',
 # 'Damırov') — egasi ularni klaviaturada tera olmaydi. NFKD ajratmaydigan
 # harflarni qo'lda moslashtiramiz, qolganini NFKD hal qiladi.
@@ -1872,7 +2045,15 @@ def get_attendance_coin_settings(request):
     """Davomat coin sozlamalarini olish."""
     try:
         s = AttendanceCoinSettings.get_settings()
-        return JsonResponse({"present": s.present, "late": s.late, "absent": s.absent})
+        return JsonResponse(
+            {
+                "present": s.present,
+                "late": s.late,
+                "absent": s.absent,
+                "payment_ontime": s.payment_ontime,
+                "payment_grace_days": s.payment_grace_days,
+            }
+        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -1904,6 +2085,22 @@ def update_attendance_coin_settings(request):
             except (ValueError, TypeError):
                 return JsonResponse({"error": "absent son bo'lishi kerak"}, status=400)
 
+        if "payment_ontime" in data:
+            try:
+                s.payment_ontime = int(data["payment_ontime"])
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {"error": "payment_ontime son bo'lishi kerak"}, status=400
+                )
+
+        if "payment_grace_days" in data:
+            try:
+                s.payment_grace_days = max(int(data["payment_grace_days"]), 0)
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {"error": "payment_grace_days son bo'lishi kerak"}, status=400
+                )
+
         s.save()
         return JsonResponse(
             {
@@ -1911,6 +2108,8 @@ def update_attendance_coin_settings(request):
                 "present": s.present,
                 "late": s.late,
                 "absent": s.absent,
+                "payment_ontime": s.payment_ontime,
+                "payment_grace_days": s.payment_grace_days,
             }
         )
     except json.JSONDecodeError:
@@ -2057,19 +2256,27 @@ def get_payments(request, student_id):
         except ValueError:
             return JsonResponse({"error": "Invalid student_id"}, status=400)
 
-        payments = Payment.objects.filter(student_id=student_id).order_by("-month")
-        data = [
-            {
-                "id": p.id,
-                "month": p.month,
-                "stage": p.stage,
-                "amount_due": p.amount_due,
-                "paid_amount": p.paid_amount,
-                "is_paid": p.is_paid,
-                "paid_at": p.paid_at.strftime("%Y-%m-%d") if p.paid_at else None,
-            }
-            for p in payments
-        ]
+        payments = (
+            Payment.objects.filter(student_id=student_id)
+            .prefetch_related("student__groups")
+            .order_by("-month")
+        )
+        data = []
+        for p in payments:
+            group = student_primary_group(p.student)
+            due = payment_due_date(p.month, group)
+            data.append(
+                {
+                    "id": p.id,
+                    "month": p.month,
+                    "stage": p.stage,
+                    "amount_due": p.amount_due,
+                    "paid_amount": p.paid_amount,
+                    "is_paid": p.is_paid,
+                    "paid_at": p.paid_at.strftime("%Y-%m-%d") if p.paid_at else None,
+                    "due_date": due.isoformat() if due else None,
+                }
+            )
         return JsonResponse(data, safe=False)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
@@ -2080,8 +2287,10 @@ def get_all_payments(request):
     try:
         month = request.GET.get("month", "").strip()
         teacher_id = request.GET.get("teacher_id", "").strip()
-        qs = Payment.objects.select_related("student", "student__teacher").order_by(
-            "-month", "student__name"
+        qs = (
+            Payment.objects.select_related("student", "student__teacher")
+            .prefetch_related("student__groups")
+            .order_by("-month", "student__name")
         )
 
         if month:
@@ -2092,22 +2301,26 @@ def get_all_payments(request):
             except ValueError:
                 return JsonResponse({"error": "Invalid teacher_id"}, status=400)
 
-        data = [
-            {
-                "id": p.id,
-                "student_id": p.student.id,
-                "student_name": f"{p.student.name} {p.student.surname}",
-                "student_phone": p.student.phone,
-                "teacher_name": p.student.teacher.name if p.student.teacher else "",
-                "month": p.month,
-                "stage": p.stage,
-                "amount_due": p.amount_due,
-                "paid_amount": p.paid_amount,
-                "is_paid": p.is_paid,
-                "paid_at": str(p.paid_at) if p.paid_at else None,
-            }
-            for p in qs
-        ]
+        data = []
+        for p in qs:
+            group = student_primary_group(p.student)
+            due = payment_due_date(p.month, group)
+            data.append(
+                {
+                    "id": p.id,
+                    "student_id": p.student.id,
+                    "student_name": f"{p.student.name} {p.student.surname}",
+                    "student_phone": p.student.phone,
+                    "teacher_name": p.student.teacher.name if p.student.teacher else "",
+                    "month": p.month,
+                    "stage": p.stage,
+                    "amount_due": p.amount_due,
+                    "paid_amount": p.paid_amount,
+                    "is_paid": p.is_paid,
+                    "paid_at": str(p.paid_at) if p.paid_at else None,
+                    "due_date": due.isoformat() if due else None,
+                }
+            )
         return JsonResponse(data, safe=False)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
@@ -2125,18 +2338,27 @@ def generate_payments(request):
             return JsonResponse({"error": "month kiritilmadi"}, status=400)
 
         try:
-            year, mon = month.split("-")
-            int(year), int(mon)
+            year, mon = (int(x) for x in month.split("-"))
+            month_last_day = date(year, mon, calendar.monthrange(year, mon)[1])
         except ValueError:
             return JsonResponse(
                 {"error": "month format 'YYYY-MM' bo'lishi kerak"}, status=400
             )
 
-        students = Student.objects.filter(is_admin=False, is_excellence=False)
+        students = Student.objects.filter(
+            is_admin=False, is_excellence=False
+        ).prefetch_related("groups")
         created_count = 0
         skipped_count = 0
+        not_opened_count = 0
 
         for student in students:
+            # Guruh o'sha oydan keyin ochilgan bo'lsa — to'lov hali boshlanmagan
+            group = student_primary_group(student)
+            if group and group.opened_date and group.opened_date > month_last_day:
+                not_opened_count += 1
+                continue
+
             price = get_stage_price(student.stage)
             _, created = Payment.objects.get_or_create(
                 student=student,
@@ -2148,12 +2370,17 @@ def generate_payments(request):
             else:
                 skipped_count += 1
 
+        msg = f"{created_count} ta yangi to'lov yaratildi, {skipped_count} ta allaqachon mavjud edi."
+        if not_opened_count:
+            msg += f" {not_opened_count} ta o'quvchi guruhi bu oydan keyin ochilgani uchun o'tkazib yuborildi."
+
         return JsonResponse(
             {
-                "message": f"{created_count} ta yangi to'lov yaratildi, {skipped_count} ta allaqachon mavjud edi.",
+                "message": msg,
                 "month": month,
                 "created": created_count,
                 "skipped": skipped_count,
+                "not_opened": not_opened_count,
             }
         )
     except json.JSONDecodeError:
@@ -2196,8 +2423,20 @@ def confirm_payment(request, payment_id):
                 )
 
         payment.is_paid = data.get("is_paid", payment.is_paid)
-        payment.paid_at = datetime.now() if payment.is_paid else None
+        payment.paid_at = timezone.now() if payment.is_paid else None
         payment.save()
+
+        # ✅ Vaqtida to'lov uchun coin mukofoti (yoki bekor qilinsa qaytarish)
+        coin_awarded = 0
+        try:
+            student = Student.objects.filter(id=payment.student_id).first()
+            if student:
+                before = student.coin_balance
+                sync_payment_ontime_coin(payment)
+                student.refresh_from_db(fields=["coin_balance"])
+                coin_awarded = student.coin_balance - before
+        except Exception:
+            logging.getLogger(__name__).exception("payment ontime coin xatosi")
 
         return JsonResponse(
             {
@@ -2205,6 +2444,7 @@ def confirm_payment(request, payment_id):
                 "is_paid": payment.is_paid,
                 "amount_due": payment.amount_due,
                 "paid_amount": payment.paid_amount,  # ✅ QO'SHILDI
+                "coin_awarded": coin_awarded,
             }
         )
     except json.JSONDecodeError:
@@ -2246,17 +2486,33 @@ def update_payment_amount(request, payment_id):
                     {"error": "paid_amount son bo'lishi kerak"}, status=400
                 )
 
-        if "is_paid" in data:
+        is_paid_changed = "is_paid" in data
+        if is_paid_changed:
             payment.is_paid = bool(data["is_paid"])
-            payment.paid_at = datetime.now() if payment.is_paid else None
+            payment.paid_at = timezone.now() if payment.is_paid else None
 
         payment.save()
+
+        # ✅ is_paid o'zgargan bo'lsa — vaqtida to'lov coinini sinxronlaymiz
+        coin_awarded = 0
+        if is_paid_changed:
+            try:
+                student = Student.objects.filter(id=payment.student_id).first()
+                if student:
+                    before = student.coin_balance
+                    sync_payment_ontime_coin(payment)
+                    student.refresh_from_db(fields=["coin_balance"])
+                    coin_awarded = student.coin_balance - before
+            except Exception:
+                logging.getLogger(__name__).exception("payment ontime coin xatosi")
+
         return JsonResponse(
             {
                 "message": "Summa yangilandi!",
                 "amount_due": payment.amount_due,
                 "paid_amount": payment.paid_amount,  # ✅ QO'SHILDI
                 "is_paid": payment.is_paid,
+                "coin_awarded": coin_awarded,
             }
         )
     except json.JSONDecodeError:
@@ -2385,6 +2641,11 @@ def create_group(request):
                 {"error": "schedule 'odd' yoki 'even' bo'lishi kerak"}, status=400
             )
 
+        # ✅ Guruh ochilgan sana (ixtiyoriy) — oylik to'lov shu kundan boshlanadi
+        opened_date, opened_err = parse_opened_date(data.get("opened_date"))
+        if opened_err:
+            return JsonResponse({"error": opened_err}, status=400)
+
         # ✅ Student IDs validation
         student_ids = data.get("students", [])
         validated_students = []
@@ -2421,6 +2682,7 @@ def create_group(request):
                 lesson_time=lesson_time,
                 room=room,
                 schedule=schedule,
+                opened_date=opened_date,
             )
 
             # Talabalar qo'shish
@@ -2478,6 +2740,11 @@ def update_group(request, group_id):
             schedule = data["schedule"].strip()
             if schedule in ["odd", "even"]:
                 group.schedule = schedule
+        if "opened_date" in data:
+            opened_date, opened_err = parse_opened_date(data.get("opened_date"))
+            if opened_err:
+                return JsonResponse({"error": opened_err}, status=400)
+            group.opened_date = opened_date
 
         # Menejer guruhni tahrirlab saqladi — import qo'ygan "tekshirish kerak"
         # belgisi endi keraksiz
@@ -3928,6 +4195,80 @@ def send_message_group(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+def build_lesson_reminder_text(group, when_date=None):
+    """Dars eslatmasi matnini quradi."""
+    if when_date is None:
+        when_date = tashkent_today()
+    weekday = WEEKDAY_NAMES_UZ[when_date.weekday()]
+    time_str = group.lesson_time.strftime("%H:%M") if group.lesson_time else ""
+    room = (group.room or "").strip()
+    room_part = f"{room}-xonada " if room else ""
+    return (
+        f"⏰ Eslatma!\n\n"
+        f"{weekday} kuni soat {time_str} da {room_part}"
+        f"«{group.name}» darsingiz boshlanadi.\n\n"
+        f"Iltimos, darsga kechikmang! 📚"
+    )
+
+
+@csrf_exempt
+def send_lesson_reminders(request):
+    """Dars boshlanishidan oldin guruh o'quvchilariga telegram eslatma.
+
+    Board (jadval ekrani) darsga ~5 daqiqa qolganda chaqiradi.
+    Body: {group_id}. Bir guruhga bir kunda faqat bir marta yuboriladi
+    (LessonReminderLog orqali) — board bir necha marta chaqirsa ham takror
+    bo'lmaydi.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body or "{}")
+        group_id = data.get("group_id")
+        if not group_id:
+            return JsonResponse({"error": "group_id majburiy"}, status=400)
+
+        group = (
+            Group.objects.filter(id=group_id).prefetch_related("students").first()
+        )
+        if not group:
+            return JsonResponse({"error": "Guruh topilmadi"}, status=404)
+
+        today = tashkent_today()
+
+        # Xavfsizlik: guruhda bugun dars bo'lmasa yubormaymiz
+        today_schedule = get_schedule_for_day(today.weekday())
+        if group.schedule != today_schedule:
+            return JsonResponse(
+                {"skipped": True, "reason": "Bugun bu guruhda dars yo'q"}
+            )
+
+        # Idempotentlik: log yozuvini avval yaratamiz (takrorning oldini oladi)
+        log, created = LessonReminderLog.objects.get_or_create(
+            group=group, date=today
+        )
+        if not created:
+            return JsonResponse(
+                {"already": True, "sent": log.sent, "no_chat": log.no_chat}
+            )
+
+        students = group.students.filter(is_admin=False, is_excellence=False)
+        text = build_lesson_reminder_text(group, today)
+        result = _do_send(students, text, "group")
+
+        log.sent = result.get("sent", result.get("queued", 0)) or 0
+        log.no_chat = result.get("no_chat", 0) or 0
+        log.save(update_fields=["sent", "no_chat"])
+
+        result["group"] = group.name
+        result["reminded"] = True
+        return JsonResponse(result)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
 @csrf_exempt
 def send_message_all(request):
     """Barcha faol o'quvchilarga xabar. Body: {text, month?}"""
@@ -3990,6 +4331,46 @@ def delete_student(request, student_id):
         name = f"{student.name} {student.surname}".strip()
         student.delete()
         return JsonResponse({"success": True, "deleted": name})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def bulk_delete_students(request):
+    """Bir yoki bir nechta o'quvchini o'chiradi (menejer paneli).
+
+    Body: {student_ids: [id, id, ...]}. Faqat admin yoki menejer.
+    Har bir o'quvchi to'lovlari, davomati, coinlari bilan birga o'chadi.
+    """
+    if request.method not in ("POST", "DELETE"):
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    denied = _require_manager_or_admin(request)
+    if denied:
+        return denied
+
+    try:
+        data = json.loads(request.body or "{}")
+        ids = data.get("student_ids") or data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return JsonResponse(
+                {"error": "student_ids ro'yxati kiritilishi kerak"}, status=400
+            )
+        try:
+            ids = [int(x) for x in ids]
+        except (ValueError, TypeError):
+            return JsonResponse(
+                {"error": "student_ids ichida faqat son bo'lishi kerak"}, status=400
+            )
+
+        qs = Student.objects.filter(id__in=ids)
+        deleted = qs.count()
+        if not deleted:
+            return JsonResponse({"error": "O'quvchi topilmadi"}, status=404)
+        qs.delete()
+        return JsonResponse({"success": True, "deleted": deleted})
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 

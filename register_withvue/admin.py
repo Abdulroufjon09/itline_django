@@ -101,7 +101,15 @@ class StudentPenaltyAdmin(admin.ModelAdmin):
 
 @admin.register(Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "get_teacher", "students_count")
+    list_display = (
+        "id",
+        "name",
+        "get_teacher",
+        "students_count",
+        "lesson_time",
+        "room",
+        "opened_date",
+    )
     search_fields = ("name", "teacher__name")
     ordering = ("name",)
 
@@ -152,3 +160,26 @@ from .models import PhoneVerification
 class PhoneVerificationAdmin(admin.ModelAdmin):
     list_display = ("id", "phone", "code", "attempts", "verified_at", "used_at", "created_at")
     search_fields = ("phone",)
+
+
+from .models import AttendanceCoinSettings, LessonReminderLog
+
+
+@admin.register(AttendanceCoinSettings)
+class AttendanceCoinSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "present",
+        "late",
+        "absent",
+        "payment_ontime",
+        "payment_grace_days",
+        "updated_at",
+    )
+
+
+@admin.register(LessonReminderLog)
+class LessonReminderLogAdmin(admin.ModelAdmin):
+    list_display = ("id", "group", "date", "sent", "no_chat", "created_at")
+    list_filter = ("date",)
+    search_fields = ("group__name",)

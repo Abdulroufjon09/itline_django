@@ -47,6 +47,7 @@ urlpatterns = [
     path("students/", views.get_students),
     path("students/update/<int:student_id>/", views.update_student),
     path("students/delete/<int:student_id>/", views.delete_student),
+    path("students/bulk-delete/", views.bulk_delete_students),
     path("ping/", views.ping),
     path("register/", views.register_student),
     path("login/", views.login_student),
@@ -154,6 +155,7 @@ urlpatterns = [
     path("messages/send/", views.send_message_student),
     path("messages/send-group/", views.send_message_group),
     path("messages/send-all/", views.send_message_all),
+    path("lessons/send-reminders/", views.send_lesson_reminders),
     path("messages/history/", views.get_message_history),
     # ───────────────────────────────
     # TELEFON TASDIQLASH (bot orqali kod)
