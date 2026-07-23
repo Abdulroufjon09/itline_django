@@ -87,6 +87,29 @@ def find_student_by_phone(phone):
     return Student.objects.filter(id=sid).first() if sid else None
 
 
+def student_login_info(student):
+    """Saytga kirish ma'lumotlari matni: login (telefon) va parol.
+
+    Import qilingan (paroli o'rnatilmagan) o'quvchining paroli — ism va
+    familiyasi (login_student shu bilan tekshiradi). O'zi maxsus parol
+    o'rnatgan bo'lsa — u hash ko'rinishida saqlanadi va ochib bo'lmaydi.
+    """
+    phone = student.phone or "—"
+    if student.password:
+        parol_qatori = (
+            "🔒 Parol: siz o'rnatgan maxsus parol — xavfsizlik uchun uni "
+            "ko'rsatib bo'lmaydi. Unutgan bo'lsangiz, administratorga murojaat qiling."
+        )
+    else:
+        parol = f"{student.name} {student.surname}".strip()
+        parol_qatori = f"🔒 Parol: {parol}  (ism va familiyangiz)"
+    return (
+        "🔑 Saytga kirish ma'lumotlaringiz:\n"
+        f"📱 Login (telefon): {phone}\n"
+        f"{parol_qatori}"
+    )
+
+
 def handle_update(update):
     """Webhook'dan kelgan update'ni qayta ishlaydi."""
     msg = update.get("message") or update.get("edited_message")
@@ -115,8 +138,16 @@ def handle_update(update):
             return
 
         phone = None
+        # Faqat tugma orqali ulashilgan (Telegram tasdiqlagan) o'z raqami
+        # bo'lsagina parolni ko'rsatamiz — qo'lda yozilgan begona raqam
+        # orqali birovning parolini olishning oldini oladi.
+        verified_own = False
         if contact:
             phone = contact.get("phone_number")
+            sender_id = (msg.get("from") or {}).get("id")
+            verified_own = (
+                sender_id is not None and contact.get("user_id") == sender_id
+            )
         elif re.sub(r"\D", "", text) and len(re.sub(r"\D", "", text)) >= 9:
             phone = text  # raqamni qo'lda yozgan bo'lsa ham qabul qilamiz
 
@@ -133,9 +164,20 @@ def handle_update(update):
                 },
             )
             if student:
+                linked_msg = LINKED_TEXT.format(
+                    name=f"{student.name} {student.surname}".strip()
+                )
+                if verified_own:
+                    linked_msg += "\n\n" + student_login_info(student)
+                else:
+                    linked_msg += (
+                        "\n\nSaytga kirish ma'lumotlaringizni ko'rish uchun "
+                        "'📱 Telefon raqamni yuborish' tugmasi orqali raqamingizni "
+                        "yuboring."
+                    )
                 send_text(
                     chat_id,
-                    LINKED_TEXT.format(name=f"{student.name} {student.surname}".strip()),
+                    linked_msg,
                     reply_markup={"remove_keyboard": True},
                 )
             else:
