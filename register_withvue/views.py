@@ -4561,7 +4561,14 @@ def change_password(request):
             teacher if teacher and _password_matches(teacher, old) else None
         )
 
-        if not matched_student and not matched_teacher:
+        # ✅ Menejer ham parolini o'zgartira olsin — u faqat Manager
+        # jadvalida (Student/Teacher emas), shuning uchun alohida tekshiramiz
+        manager = _find_manager_by_any_phone(phone)
+        matched_manager = (
+            manager if manager and _password_matches(manager, old) else None
+        )
+
+        if not matched_student and not matched_teacher and not matched_manager:
             return JsonResponse(
                 {"error": "Telefon yoki joriy parol noto'g'ri"}, status=401
             )
@@ -4582,6 +4589,9 @@ def change_password(request):
             Student.objects.filter(teacher_id=matched_teacher.id, is_admin=True).update(
                 password=hashed
             )
+        if matched_manager:
+            matched_manager.password = hashed
+            matched_manager.save(update_fields=["password"])
 
         return JsonResponse({"message": "Parol muvaffaqiyatli o'zgartirildi"})
     except json.JSONDecodeError:
