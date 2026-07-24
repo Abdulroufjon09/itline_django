@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, date, timedelta
 
 from django.db import transaction
-from django.db.models import Sum, F
+from django.db.models import Sum, F, Count, Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
@@ -229,6 +229,48 @@ def payment_due_date(month_str, group):
     try:
         return date(year, mon, day)
     except ValueError:
+        return None
+
+
+def attendance_map_for_month(student_ids, month_str):
+    """Oyда har o'quvchi uchun (kelgan, jami) davomat sonini qaytaradi.
+
+    Dars yaratilganда har o'quvchiga 'absent' yozuvi yaratilgani uchun
+    jami davomat yozuvlari = o'sha oyдаги darslar soni. Kelgan = present+late.
+    Har kunlik kurslarда darslar ko'p bo'lgani uchun jami ham ko'p bo'ladi —
+    hisob avtomatik to'g'ri chiqadi.
+    """
+    result = {}
+    try:
+        year, mon = int(str(month_str)[:4]), int(str(month_str)[5:7])
+    except (ValueError, TypeError, IndexError):
+        return result
+    if not student_ids:
+        return result
+    rows = (
+        Attendance.objects.filter(
+            student_id__in=student_ids,
+            lesson__date__year=year,
+            lesson__date__month=mon,
+        )
+        .values("student_id")
+        .annotate(
+            total=Count("id"),
+            attended=Count("id", filter=Q(status__in=["present", "late"])),
+        )
+    )
+    for r in rows:
+        result[r["student_id"]] = (r["attended"], r["total"])
+    return result
+
+
+def attendance_based_due(amount_due, attended, total):
+    """Davomatга qarab to'lov = amount_due * kelgan / jami. Jami 0 → None."""
+    if not total:
+        return None
+    try:
+        return round(int(amount_due) * attended / total)
+    except (ValueError, TypeError, ZeroDivisionError):
         return None
 
 
@@ -2265,6 +2307,9 @@ def get_payments(request, student_id):
         for p in payments:
             group = student_primary_group(p.student)
             due = payment_due_date(p.month, group)
+            attended, total = attendance_map_for_month([student_id], p.month).get(
+                student_id, (0, 0)
+            )
             data.append(
                 {
                     "id": p.id,
@@ -2275,6 +2320,9 @@ def get_payments(request, student_id):
                     "is_paid": p.is_paid,
                     "paid_at": p.paid_at.strftime("%Y-%m-%d") if p.paid_at else None,
                     "due_date": due.isoformat() if due else None,
+                    "attended_count": attended,
+                    "total_lessons": total,
+                    "attendance_due": attendance_based_due(p.amount_due, attended, total),
                 }
             )
         return JsonResponse(data, safe=False)
@@ -2301,10 +2349,18 @@ def get_all_payments(request):
             except ValueError:
                 return JsonResponse({"error": "Invalid teacher_id"}, status=400)
 
+        payments = list(qs)
+        att_map = (
+            attendance_map_for_month([p.student_id for p in payments], month)
+            if month
+            else {}
+        )
+
         data = []
-        for p in qs:
+        for p in payments:
             group = student_primary_group(p.student)
             due = payment_due_date(p.month, group)
+            attended, total = att_map.get(p.student_id, (0, 0))
             data.append(
                 {
                     "id": p.id,
@@ -2319,6 +2375,10 @@ def get_all_payments(request):
                     "is_paid": p.is_paid,
                     "paid_at": str(p.paid_at) if p.paid_at else None,
                     "due_date": due.isoformat() if due else None,
+                    # Davomatга qarab to'lov (kelgan darslar uchun)
+                    "attended_count": attended,
+                    "total_lessons": total,
+                    "attendance_due": attendance_based_due(p.amount_due, attended, total),
                 }
             )
         return JsonResponse(data, safe=False)
