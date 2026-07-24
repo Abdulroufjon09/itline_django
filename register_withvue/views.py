@@ -1371,7 +1371,7 @@ def update_student(request, student_id):
                     student.teacher = senior_teacher
 
         if "schedule" in data:
-            if data["schedule"] not in ["odd", "even"]:
+            if data["schedule"] not in ["odd", "even", "daily"]:
                 return JsonResponse(
                     {"error": "schedule 'odd' yoki 'even' bo'lishi kerak"}, status=400
                 )
@@ -1877,7 +1877,10 @@ def create_lesson(request):
         else:
             students_qs = teacher.students.filter(is_admin=False, is_excellence=False)
             if schedule_for_day:
-                students_qs = students_qs.filter(schedule=schedule_for_day)
+                # "Har kuni" (daily) o'quvchilar har darsga qo'shiladi
+                students_qs = students_qs.filter(
+                    schedule__in=[schedule_for_day, "daily"]
+                )
 
         for student in students_qs:
             Attendance.objects.get_or_create(
@@ -2696,7 +2699,7 @@ def create_group(request):
 
         # ✅ Schedule validation
         schedule = data.get("schedule", "odd").strip()
-        if schedule not in ["odd", "even"]:
+        if schedule not in ["odd", "even", "daily"]:
             return JsonResponse(
                 {"error": "schedule 'odd' yoki 'even' bo'lishi kerak"}, status=400
             )
@@ -2798,7 +2801,7 @@ def update_group(request, group_id):
             group.room = data["room"].strip()
         if "schedule" in data:
             schedule = data["schedule"].strip()
-            if schedule in ["odd", "even"]:
+            if schedule in ["odd", "even", "daily"]:
                 group.schedule = schedule
         if "opened_date" in data:
             opened_date, opened_err = parse_opened_date(data.get("opened_date"))
@@ -4296,9 +4299,10 @@ def send_lesson_reminders(request):
 
         today = tashkent_today()
 
-        # Xavfsizlik: guruhda bugun dars bo'lmasa yubormaymiz
+        # Xavfsizlik: guruhда bugun dars bo'lmasa yubormaymiz.
+        # "Har kuni" (daily) guruhlar har kuni dars qiladi.
         today_schedule = get_schedule_for_day(today.weekday())
-        if group.schedule != today_schedule:
+        if group.schedule not in (today_schedule, "daily"):
             return JsonResponse(
                 {"skipped": True, "reason": "Bugun bu guruhda dars yo'q"}
             )

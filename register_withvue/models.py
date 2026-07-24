@@ -55,6 +55,7 @@ class Student(models.Model):
     SCHEDULE_CHOICES = [
         ("odd", "Du-Chor-Juma"),
         ("even", "Se-Pay-Shan"),
+        ("daily", "Har kuni"),
     ]
 
     name = models.CharField(max_length=100)
@@ -270,6 +271,7 @@ class Group(models.Model):
     SCHEDULE_CHOICES = [
         ("odd", "Du-Chor-Juma"),
         ("even", "Se-Pay-Shan"),
+        ("daily", "Har kuni"),
     ]
 
     name = models.CharField(max_length=100)
