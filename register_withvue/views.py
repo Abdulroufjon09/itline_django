@@ -4349,6 +4349,42 @@ def send_message_all(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@csrf_exempt
+def send_message_students(request):
+    """Berilgan o'quvchilar ro'yxatiga xabar (masalan to'lov qilmaganlar).
+
+    Body: {student_ids: [...], text, month?}
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        text = (data.get("text") or "").strip()
+        ids = data.get("student_ids") or []
+        if not text:
+            return JsonResponse({"error": "text majburiy"}, status=400)
+        if not isinstance(ids, list) or not ids:
+            return JsonResponse(
+                {"error": "student_ids ro'yxati kiritilishi kerak"}, status=400
+            )
+        try:
+            ids = [int(x) for x in ids]
+        except (ValueError, TypeError):
+            return JsonResponse(
+                {"error": "student_ids ichида son bo'lishi kerak"}, status=400
+            )
+        students = Student.objects.filter(
+            id__in=ids, is_admin=False, is_excellence=False
+        )
+        result = _do_send(students, text, "group", data.get("month", ""))
+        result["total"] = students.count()
+        return JsonResponse(result)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
 def get_message_history(request):
     """Yuborilgan xabarlar tarixi (oxirgi 200 ta)."""
     try:

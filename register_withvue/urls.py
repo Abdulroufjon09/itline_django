@@ -155,6 +155,7 @@ urlpatterns = [
     path("messages/send/", views.send_message_student),
     path("messages/send-group/", views.send_message_group),
     path("messages/send-all/", views.send_message_all),
+    path("messages/send-students/", views.send_message_students),
     path("lessons/send-reminders/", views.send_lesson_reminders),
     path("messages/history/", views.get_message_history),
     # ───────────────────────────────
